@@ -27,7 +27,7 @@ public class AreaTab implements Tab {
 
     private ListView lv;
     private View empty;
-    private View banner;
+    private TextView banner;
     private final List<JSONObject> data = new ArrayList<>();
     private AreaAdapter adapter;
     private boolean loading;
@@ -64,25 +64,41 @@ public class AreaTab implements Tab {
         if (loading) return;
         loading = true;
         Api.io(() -> {
+            String err = null;
+            boolean fromCache = false;
+            List<JSONObject> l = new ArrayList<>();
             try {
                 final boolean[] cached = new boolean[1];
                 JSONObject v = Api.areas(act, 0, -1, cached);
                 JSONArray ch = v.optJSONArray("children");
-                List<JSONObject> l = new ArrayList<>();
                 for (int i = 0; i < ch.length(); i++) l.add(ch.optJSONObject(i));
-                Api.ui(() -> {
-                    banner.setVisibility(cached[0] ? View.VISIBLE : View.GONE);
-                    data.clear();
-                    data.addAll(l);
-                    adapter.notifyDataSetChanged();
-                    loading = false;
-                });
-            } catch (final Exception e) {
-                Api.ui(() -> {
-                    loading = false;
-                    Ui.toast(act, "加载失败：" + e.getMessage());
-                });
+                fromCache = cached[0];
+            } catch (Exception e) {
+                err = e.getMessage() == null ? "网络错误" : e.getMessage();
             }
+            final List<JSONObject> res = l;
+            final String fErr = err;
+            final boolean fc = fromCache;
+            Api.ui(() -> {
+                loading = false;
+                if (fErr != null) {
+                    Ui.banner(banner, true, "⚠ 加载失败：" + fErr + "（点击重试）");
+                    banner.setOnClickListener(v -> refresh());
+                } else if (fc) {
+                    Ui.banner(banner, false, "⚠ 离线：显示上次缓存的数据");
+                    banner.setOnClickListener(null);
+                } else {
+                    banner.setVisibility(View.GONE);
+                    banner.setOnClickListener(null);
+                }
+                data.clear();
+                data.addAll(res);
+                adapter.notifyDataSetChanged();
+                if (res.isEmpty() && fErr == null) {
+                    ((TextView) empty).setText(Ui.emptyHint(act,
+                            "还没有区块，先新增一个（如：广州市）"));
+                }
+            });
         });
     }
 

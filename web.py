@@ -3,12 +3,15 @@
 
 挂在 AstrBot 事件循环上（AppRunner + TCPSite），端点与手机 app 约定完全一致：
 /api/health、/api/visits、/api/restaurants、/api/areas、/api/rank/*、
-/api/random、/api/upload、/api/geocode、/api/export、/images/*。
+/api/random、/api/upload、/api/geocode、/api/export、/api/reviews/*、/images/*。
 
+重要：store 是同步实现，所有 DB/文件操作必须经 asyncio.to_thread 进入线程池，
+绝不能直接在事件循环线程执行，否则会阻塞整个 AstrBot。
 本模块不依赖 AstrBot，可独立测试。
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 from typing import Optional
 
@@ -46,6 +49,8 @@ class EatWhatService:
 
         app.router.add_post("/api/visits", self._create_visit)
         app.router.add_post("/api/upload", self._upload)
+        app.router.add_put("/api/reviews/{rid}", self._update_review)
+        app.router.add_delete("/api/reviews/{rid}", self._delete_review)
         app.router.add_post("/api/areas", self._create_area)
         app.router.add_get("/api/areas", self._list_areas)
         app.router.add_get("/api/restaurants", self._list_restaurants)
@@ -103,16 +108,17 @@ class EatWhatService:
         return request.query.get(name, default)
 
     # ------------------------------------------------------------------ #
-    # handlers
+    # handlers（store 同步调用一律经 to_thread，避免阻塞事件循环）
     # ------------------------------------------------------------------ #
 
     async def _health(self, request: web.Request) -> web.Response:
-        return web.json_response(self.store.health())
+        return web.json_response(await asyncio.to_thread(self.store.health))
 
     async def _create_visit(self, request: web.Request) -> web.Response:
         try:
             payload = await request.json()
-            return web.json_response(self.store.create_visit(payload))
+            result = await asyncio.to_thread(self.store.create_visit, payload)
+            return web.json_response(result)
         except StoreError as e:
             return self._err(e)
         except Exception:
@@ -124,16 +130,42 @@ class EatWhatService:
             field = post.get("file")
             if field is None:
                 return web.json_response({"detail": "缺少 file 字段"}, status=400)
-            data = field.file.read()
-            return web.json_response(self.store.save_image(data, field.content_type or ""))
+            data = await asyncio.to_thread(field.file.read)
+            result = await asyncio.to_thread(
+                self.store.save_image, data, field.content_type or "")
+            return web.json_response(result)
         except StoreError as e:
             return self._err(e)
+
+    async def _update_review(self, request: web.Request) -> web.Response:
+        try:
+            payload = await request.json()
+            result = await asyncio.to_thread(
+                self.store.update_review, int(request.match_info["rid"]), payload)
+            return web.json_response(result)
+        except StoreError as e:
+            return self._err(e)
+        except (TypeError, ValueError):
+            return web.json_response({"detail": "评价 id 无效"}, status=400)
+        except Exception:
+            return web.json_response({"detail": "请求体不是有效 JSON"}, status=400)
+
+    async def _delete_review(self, request: web.Request) -> web.Response:
+        try:
+            result = await asyncio.to_thread(
+                self.store.delete_review, int(request.match_info["rid"]))
+            return web.json_response(result)
+        except StoreError as e:
+            return self._err(e)
+        except (TypeError, ValueError):
+            return web.json_response({"detail": "评价 id 无效"}, status=400)
 
     async def _create_area(self, request: web.Request) -> web.Response:
         try:
             payload = await request.json()
-            return web.json_response(self.store.create_area(
-                payload.get("name"), payload.get("parent_id")))
+            result = await asyncio.to_thread(
+                self.store.create_area, payload.get("name"), payload.get("parent_id"))
+            return web.json_response(result)
         except StoreError as e:
             return self._err(e)
         except Exception:
@@ -143,23 +175,28 @@ class EatWhatService:
         try:
             parent = self._query(request, "parent_id", "")
             parent_id = int(parent) if parent not in ("", None) else None
+            mode = clamp_mode(self._query(request, "mode", -1))
             return web.json_response(
-                self.store.areas_view(parent_id, clamp_mode(self._query(request, "mode", -1))))
+                await asyncio.to_thread(self.store.areas_view, parent_id, mode))
         except StoreError as e:
             return self._err(e)
 
     async def _list_restaurants(self, request: web.Request) -> web.Response:
         try:
-            return web.json_response(self.store.list_restaurants(
-                keyword=self._query(request, "keyword"),
-                limit=int(self._query(request, "limit", 50)),
-                mode=clamp_mode(self._query(request, "mode", -1))))
+            rows = await asyncio.to_thread(
+                self.store.list_restaurants,
+                self._query(request, "keyword"),
+                int(self._query(request, "limit", 50)),
+                clamp_mode(self._query(request, "mode", -1)))
+            return web.json_response(rows)
         except (TypeError, ValueError):
             return web.json_response({"detail": "limit 参数无效"}, status=400)
 
     async def _restaurant_detail(self, request: web.Request) -> web.Response:
         try:
-            return web.json_response(self.store.restaurant_detail(int(request.match_info["rid"])))
+            detail = await asyncio.to_thread(
+                self.store.restaurant_detail, int(request.match_info["rid"]))
+            return web.json_response(detail)
         except StoreError as e:
             return self._err(e)
         except (TypeError, ValueError):
@@ -167,34 +204,42 @@ class EatWhatService:
 
     async def _rank_restaurants(self, request: web.Request) -> web.Response:
         try:
-            return web.json_response(self.store.list_restaurants(
-                limit=int(self._query(request, "limit", 20)),
-                mode=clamp_mode(self._query(request, "mode", -1))))
+            rows = await asyncio.to_thread(
+                self.store.list_restaurants, "",
+                int(self._query(request, "limit", 20)),
+                clamp_mode(self._query(request, "mode", -1)))
+            return web.json_response(rows)
         except (TypeError, ValueError):
             return web.json_response({"detail": "limit 参数无效"}, status=400)
 
     async def _rank_dishes(self, request: web.Request) -> web.Response:
         try:
-            return web.json_response(self.store.rank_dishes(
-                limit=int(self._query(request, "limit", 20)),
-                keyword=self._query(request, "keyword"),
-                mode=clamp_mode(self._query(request, "mode", -1))))
+            rows = await asyncio.to_thread(
+                self.store.rank_dishes,
+                int(self._query(request, "limit", 20)),
+                self._query(request, "keyword"),
+                clamp_mode(self._query(request, "mode", -1)))
+            return web.json_response(rows)
         except (TypeError, ValueError):
             return web.json_response({"detail": "limit 参数无效"}, status=400)
 
     async def _rank_restaurant_dishes(self, request: web.Request) -> web.Response:
         try:
-            return web.json_response(self.store.rank_restaurant_dishes(
-                limit=int(self._query(request, "limit", 20)),
-                mode=clamp_mode(self._query(request, "mode", -1))))
+            rows = await asyncio.to_thread(
+                self.store.rank_restaurant_dishes,
+                int(self._query(request, "limit", 20)),
+                clamp_mode(self._query(request, "mode", -1)))
+            return web.json_response(rows)
         except (TypeError, ValueError):
             return web.json_response({"detail": "limit 参数无效"}, status=400)
 
     async def _random(self, request: web.Request) -> web.Response:
         try:
-            return web.json_response(self.store.random_pick(
+            result = await asyncio.to_thread(
+                self.store.random_pick,
                 self._query(request, "min_rating", 3.5),
-                clamp_mode(self._query(request, "mode", -1))))
+                clamp_mode(self._query(request, "mode", -1)))
+            return web.json_response(result)
         except StoreError as e:
             return self._err(e)
 
@@ -227,4 +272,4 @@ class EatWhatService:
         return web.json_response({"lat": lat, "lng": lng, "address": address})
 
     async def _export(self, request: web.Request) -> web.Response:
-        return web.json_response(self.store.export_all())
+        return web.json_response(await asyncio.to_thread(self.store.export_all))

@@ -1,6 +1,7 @@
 package com.eatwhat.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Intent;
 import android.graphics.Color;
@@ -10,6 +11,7 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -42,19 +44,33 @@ public class RestaurantDetailActivity extends Activity {
 
     private void load() {
         Api.io(() -> {
+            String err = null;
+            boolean fromCache = false;
+            JSONObject d = null;
             try {
                 final boolean[] cached = new boolean[1];
-                final JSONObject d = Api.detail(this, id, cached);
-                Api.ui(() -> {
-                    findViewById(R.id.banner).setVisibility(cached[0] ? View.VISIBLE : View.GONE);
-                    render(d);
-                });
-            } catch (final Exception e) {
-                Api.ui(() -> {
-                    Ui.toast(this, e.getMessage());
-                    finish();
-                });
+                d = Api.detail(this, id, cached);
+                fromCache = cached[0];
+            } catch (Exception e) {
+                err = e.getMessage() == null ? "网络错误" : e.getMessage();
             }
+            final JSONObject fd = d;
+            final String fErr = err;
+            final boolean fc = fromCache;
+            Api.ui(() -> {
+                TextView b = findViewById(R.id.banner);
+                if (fErr != null) {
+                    Ui.banner(b, true, "⚠ 加载失败：" + fErr + "（点击重试）");
+                    b.setOnClickListener(v -> load());
+                } else if (fc) {
+                    Ui.banner(b, false, "⚠ 离线：显示上次缓存的数据");
+                    b.setOnClickListener(null);
+                } else {
+                    b.setVisibility(View.GONE);
+                    b.setOnClickListener(null);
+                }
+                if (fd != null) render(fd);
+            });
         });
     }
 
@@ -129,6 +145,125 @@ public class RestaurantDetailActivity extends Activity {
         double avg = s.optDouble("avg", 0);
         int count = s.optInt("count", 0);
         return avg > 0 ? label + " ★ " + avg + " · " + count + " 次" : label + " 暂无";
+    }
+
+    private void reviewMenu(final JSONObject rv) {
+        new AlertDialog.Builder(this)
+                .setItems(new String[]{"✏️ 修改评价", "🗑 删除评价"}, (d, w) -> {
+                    if (w == 0) editReview(rv);
+                    else confirmDelete(rv);
+                })
+                .show();
+    }
+
+    private void editReview(final JSONObject rv) {
+        final long rid = rv.optLong("id");
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = Ui.dp(this, 22);
+        box.setPadding(pad, Ui.dp(this, 12), pad, 0);
+
+        final StarInput star = new StarInput(this);
+        star.setRating(rv.optInt("rating", 0));
+        box.addView(star);
+
+        LinearLayout modes = new LinearLayout(this);
+        modes.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams modesLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        modesLp.topMargin = Ui.dp(this, 8);
+        box.addView(modes, modesLp);
+        final TextView chipIn = modeChip("堂食");
+        final TextView chipOut = modeChip("外卖");
+        modes.addView(chipIn);
+        modes.addView(chipOut);
+        final int[] selMode = {rv.optInt("mode", 0)};
+        final Runnable restyle = () -> {
+            chipIn.setBackgroundResource(selMode[0] == 0 ? R.drawable.chip_on : R.drawable.chip_off);
+            chipIn.setTextColor(selMode[0] == 0 ? 0xFFFFFFFF : 0xFF2B2320);
+            chipOut.setBackgroundResource(selMode[0] == 1 ? R.drawable.chip_on : R.drawable.chip_off);
+            chipOut.setTextColor(selMode[0] == 1 ? 0xFFFFFFFF : 0xFF2B2320);
+        };
+        chipIn.setOnClickListener(v -> {
+            selMode[0] = 0;
+            restyle.run();
+        });
+        chipOut.setOnClickListener(v -> {
+            selMode[0] = 1;
+            restyle.run();
+        });
+        restyle.run();
+
+        final EditText et = new EditText(this);
+        et.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        et.setMinLines(2);
+        et.setTextColor(Color.parseColor("#2B2320"));
+        et.setText(rv.optString("comment", ""));
+        et.setHint("评价内容");
+        LinearLayout.LayoutParams etLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        etLp.topMargin = Ui.dp(this, 10);
+        box.addView(et, etLp);
+
+        new AlertDialog.Builder(this)
+                .setTitle("修改评价")
+                .setView(box)
+                .setPositiveButton("保存", (d, w) -> {
+                    int rating = star.getRating();
+                    if (rating == 0) {
+                        Ui.toast(this, "请先打分");
+                        return;
+                    }
+                    Ui.toast(this, "保存中…");
+                    Api.io(() -> {
+                        try {
+                            Api.updateReview(this, rid, rating,
+                                    et.getText().toString().trim(), selMode[0]);
+                            Api.ui(() -> {
+                                Ui.toast(this, "已修改 ✓");
+                                load();
+                            });
+                        } catch (final Exception e) {
+                            Api.ui(() -> Ui.toast(this, "修改失败：" + e.getMessage()));
+                        }
+                    });
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private TextView modeChip(String label) {
+        TextView t = new TextView(this);
+        t.setText(label);
+        t.setTextSize(13);
+        t.setPadding(Ui.dp(this, 14), Ui.dp(this, 5), Ui.dp(this, 14), Ui.dp(this, 5));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.rightMargin = Ui.dp(this, 8);
+        t.setLayoutParams(lp);
+        return t;
+    }
+
+    private void confirmDelete(final JSONObject rv) {
+        new AlertDialog.Builder(this)
+                .setMessage("删除这条评价？关联的照片也会一并删除。")
+                .setPositiveButton("删除", (d, w) -> {
+                    Ui.toast(this, "删除中…");
+                    Api.io(() -> {
+                        try {
+                            Api.deleteReview(this, rv.optLong("id"));
+                            Api.ui(() -> {
+                                Ui.toast(this, "已删除");
+                                load();
+                            });
+                        } catch (final Exception e) {
+                            Api.ui(() -> Ui.toast(this, "删除失败：" + e.getMessage()));
+                        }
+                    });
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private void openMap(String amapUri, String amapWeb) {
@@ -255,6 +390,14 @@ public class RestaurantDetailActivity extends Activity {
         tvTime.setTextColor(Color.parseColor("#B9ACA2"));
         tvTime.setTextSize(12);
         head.addView(tvTime);
+
+        TextView btnEdit = new TextView(this);
+        btnEdit.setText("编辑");
+        btnEdit.setTextColor(Color.parseColor("#9A8F87"));
+        btnEdit.setTextSize(13);
+        btnEdit.setPadding(Ui.dp(this, 10), 0, 0, 0);
+        head.addView(btnEdit);
+        btnEdit.setOnClickListener(v -> reviewMenu(rv));
 
         TextView tvStars = new TextView(this);
         int rating = rv.optInt("rating", 0);

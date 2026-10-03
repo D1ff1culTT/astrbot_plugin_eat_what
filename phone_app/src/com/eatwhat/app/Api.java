@@ -172,13 +172,36 @@ public final class Api {
     }
 
     public static JSONObject post(Context c, String path, JSONObject payload) throws Exception {
+        return sendWithBody(c, "POST", path, payload);
+    }
+
+    public static JSONObject put(Context c, String path, JSONObject payload) throws Exception {
+        return sendWithBody(c, "PUT", path, payload);
+    }
+
+    private static JSONObject sendWithBody(Context c, String method, String path,
+                                           JSONObject payload) throws Exception {
         HttpURLConnection conn = open(c, path);
-        conn.setRequestMethod("POST");
+        conn.setRequestMethod(method);
         conn.setDoOutput(true);
         conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
         OutputStream os = conn.getOutputStream();
         os.write(payload.toString().getBytes("UTF-8"));
         os.close();
+        int code = conn.getResponseCode();
+        String body = readBody(conn);
+        conn.disconnect();
+        if (code >= 400) throw new HttpError(code, errorFor(code, body));
+        try {
+            return new JSONObject(body);
+        } catch (Exception e) {
+            throw new IOException("响应不是有效 JSON");
+        }
+    }
+
+    public static JSONObject delete(Context c, String path) throws Exception {
+        HttpURLConnection conn = open(c, path);
+        conn.setRequestMethod("DELETE");
         int code = conn.getResponseCode();
         String body = readBody(conn);
         conn.disconnect();
@@ -289,6 +312,20 @@ public final class Api {
 
     public static JSONObject visit(Context c, JSONObject payload) throws Exception {
         return post(c, "/api/visits", payload);
+    }
+
+    /** 修改评价：评分 / 文字 / 堂食外卖。 */
+    public static JSONObject updateReview(Context c, long id, int rating,
+                                          String comment, int mode) throws Exception {
+        JSONObject p = new JSONObject();
+        p.put("rating", rating);
+        p.put("comment", comment == null ? "" : comment);
+        p.put("mode", mode);
+        return put(c, "/api/reviews/" + id, p);
+    }
+
+    public static JSONObject deleteReview(Context c, long id) throws Exception {
+        return delete(c, "/api/reviews/" + id);
     }
 
     private Api() {

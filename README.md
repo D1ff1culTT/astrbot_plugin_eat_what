@@ -107,6 +107,8 @@ AI 会话中可用的 LLM 工具：
 | GET | `/api/random?mode=&min_rating=` | 今天吃什么 |
 | POST | `/api/upload` | 图片上传（multipart，≤10MB），返回 `/images/...` |
 | GET | `/api/geocode?lat=&lng=` | 坐标→地址（高德/OSM，失败返回 null） |
+| PUT | `/api/reviews/{id}` | 修改单条评价 `{rating?, comment?, mode?}`（app 详情页「编辑」） |
+| DELETE | `/api/reviews/{id}` | 删除单条评价（连带删除其图片文件） |
 | GET | `/api/export` | 全量数据导出（含区块树） |
 
 > `mode`：`-1`=全部、`0`=堂食、`1`=外卖。鉴权：除 `/api/health` 与 `/images/*` 外均需 `Authorization: Bearer <token>` 或 `X-Api-Token`。

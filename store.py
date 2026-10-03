@@ -206,7 +206,9 @@ class EatWhatStore:
     def __init__(self, db_path: Path, images_dir: Path):
         self.db_path = Path(db_path)
         self.images_dir = Path(images_dir)
-        self._lock = threading.Lock()
+        # 可重入锁：create_area 等方法会在持锁期间调用其他持锁方法，
+        # 普通 Lock 会自死锁并阻塞 AstrBot 事件循环（表现为整个进程假死）
+        self._lock = threading.RLock()
         self.images_dir.mkdir(parents=True, exist_ok=True)
         with self._lock, self._conn() as conn:
             conn.executescript(SCHEMA)
@@ -301,7 +303,8 @@ class EatWhatStore:
             else:
                 aid = conn.execute("INSERT INTO areas(name, parent_id) VALUES (?,?)",
                                    (name, parent_id)).lastrowid
-            return self.areas_view(aid, MODE_ALL)
+        # 视图组装放在锁外（areas_view 自身会加锁）
+        return self.areas_view(aid, MODE_ALL)
 
     def areas_view(self, parent_id: Optional[int], mode: int) -> dict:
         """某区块的视图：路径、子区块（含聚合评分，按分排序）、子树内餐厅排名。parent_id None = 根。"""
@@ -483,6 +486,54 @@ class EatWhatStore:
         with self._lock:
             dst.write_bytes(data)
         return {"url": f"/images/{rel}"}
+
+    # ---------------------------------------------------------------- #
+    # 评价修改 / 删除
+    # ---------------------------------------------------------------- #
+
+    def update_review(self, rid: int, payload: dict) -> dict:
+        """修改评价：rating / comment / mode 传哪个改哪个。"""
+        if not isinstance(payload, dict):
+            raise StoreError(400, "请求体必须是 JSON 对象")
+        rating = payload.get("rating")
+        comment = payload.get("comment")
+        mode = payload.get("mode")
+        if rating is None and comment is None and mode is None:
+            raise StoreError(400, "没有需要修改的字段")
+        with self._lock, self._conn() as conn:
+            if not conn.execute("SELECT 1 FROM reviews WHERE id = ?", (rid,)).fetchone():
+                raise StoreError(404, "评价不存在")
+            if rating is not None:
+                if not _rating_ok(rating):
+                    raise StoreError(400, "评分必须是 1-5 的整数")
+                conn.execute("UPDATE reviews SET rating = ? WHERE id = ?", (int(rating), rid))
+            if comment is not None:
+                conn.execute("UPDATE reviews SET comment = ? WHERE id = ?",
+                             (str(comment).strip(), rid))
+            if mode is not None:
+                if mode not in (0, 1):
+                    raise StoreError(400, "mode 必须是 0（堂食）或 1（外卖）")
+                conn.execute("UPDATE reviews SET mode = ? WHERE id = ?", (mode, rid))
+        return {"ok": True, "review_id": rid}
+
+    def delete_review(self, rid: int) -> dict:
+        """删除评价，连带删除其图片文件。"""
+        with self._lock, self._conn() as conn:
+            row = conn.execute("SELECT images FROM reviews WHERE id = ?", (rid,)).fetchone()
+            if not row:
+                raise StoreError(404, "评价不存在")
+            for url in _imgs(row["images"]):
+                if not url.startswith("/images/"):
+                    continue
+                p = (self.images_dir / url[len("/images/"):]).resolve()
+                try:  # 防路径穿越：只删 images 目录内的文件
+                    p.relative_to(self.images_dir.resolve())
+                except ValueError:
+                    continue
+                p.unlink(missing_ok=True)
+            conn.execute("DELETE FROM reviews WHERE id = ?", (rid,))
+        return {"ok": True, "review_id": rid}
+
 
     # ---------------------------------------------------------------- #
     # 查询与排名
