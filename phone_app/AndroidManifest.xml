@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.eatwhat.app"
+    android:versionCode="3"
+    android:versionName="1.2">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28" />
+
+    <!-- 服务器走 HTTP（局域网自建），允许明文 -->
+    <application
+        android:label="@string/app_name"
+        android:icon="@drawable/icon"
+        android:theme="@style/AppTheme"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true">
+
+        <!-- 主界面（记录 / 排行 / 餐厅 三个标签页） -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 餐厅详情（招牌菜 / 评价 / 地址地图） -->
+        <activity
+            android:name=".RestaurantDetailActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <!-- 区块详情（逐级下钻 / 子树餐厅排名） -->
+        <activity
+            android:name=".AreaActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <!-- 相机拍照回写：免 androidx FileProvider 的极简实现 -->
+        <provider
+            android:name=".PhotoProvider"
+            android:authorities="com.eatwhat.app.photos"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+</manifest>

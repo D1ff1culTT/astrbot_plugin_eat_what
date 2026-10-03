@@ -1,0 +1,6 @@
+# 构建产物与测试数据
+out/
+.build/
+testdata/
+__pycache__/
+*.pyc

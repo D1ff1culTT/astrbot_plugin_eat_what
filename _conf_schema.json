@@ -1,0 +1,27 @@
+{
+  "http_host": {
+    "description": "录入端绑定地址",
+    "hint": "手机 app 上传数据的 HTTP 服务监听地址。部署在服务器/Docker 时通常填 0.0.0.0。",
+    "type": "string",
+    "default": "0.0.0.0"
+  },
+  "http_port": {
+    "description": "录入端端口",
+    "hint": "手机 app 上传数据的 HTTP 服务端口，默认 8765。Docker 部署需映射该端口（-p 8765:8765）。",
+    "type": "int",
+    "default": 8765
+  },
+  "api_token": {
+    "description": "录入鉴权 Token",
+    "hint": "手机 app 请求时需携带（Bearer 或 X-Api-Token）。留空则不做鉴权（仅建议在内网使用）。",
+    "type": "string",
+    "default": "",
+    "secret": true
+  },
+  "amap_key": {
+    "description": "高德 Web 服务 Key（可选）",
+    "hint": "填了之后 app「定位→地址」反查走高德，国内地址更准；不填退回 OSM（国内可能不通，此时地址需手动填）。",
+    "type": "string",
+    "default": ""
+  }
+}
