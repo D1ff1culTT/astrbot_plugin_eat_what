@@ -7,9 +7,10 @@
   2. LLM 工具：餐厅/菜品/招牌菜排名（可分堂食、外卖）、找店、看店详情、
      区块逐级查询（如 广州市/天河区/某大学/某饭堂）、加权随机推荐。
   3. 聊天指令：/吃什么 /餐厅排名 /菜品排名 /招牌菜 /美食帮助。
-"""
-from __future__ import annotations
 
+注意：不要在本文件加 from __future__ import annotations——AstrBot 校验 LLM 工具
+参数时要求注解是真实类型（str/int/bool），future import 会把注解变成字符串。
+"""
 from pathlib import Path
 
 from astrbot.api import logger
@@ -33,7 +34,7 @@ class EatWhatPlugin(Star):
         self.store = EatWhatStore(
             db_path=self.data_dir / "eat_what.db",
             images_dir=self.data_dir / "images")
-        self.service: EatWhatService | None = None
+        self.service = None  # EatWhatService，initialize 时创建
 
     # ------------------------------------------------------------------ #
     # 生命周期：启动/停止 HTTP 服务
