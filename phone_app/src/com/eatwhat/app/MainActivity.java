@@ -199,8 +199,10 @@ public class MainActivity extends Activity {
             Api.io(() -> {
                 try {
                     JSONObject h = Api.health(this);
-                    Api.ui(() -> Ui.toast(this, "连接成功：餐厅 " + h.optInt("restaurants")
-                            + " · 菜品 " + h.optInt("dishes") + " · 评价 " + h.optInt("reviews")));
+                    String v = h.optString("version", "未知版本");
+                    Api.ui(() -> Ui.toast(this, "连接成功（服务端 " + v + "）：餐厅 "
+                            + h.optInt("restaurants") + " · 菜品 " + h.optInt("dishes")
+                            + " · 评价 " + h.optInt("reviews")));
                 } catch (final Exception e) {
                     Api.ui(() -> Ui.toast(this, "连接失败：" + e.getMessage()));
                 }
