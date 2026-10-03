@@ -27,12 +27,13 @@ class EatWhatService:
     """包裹 EatWhatStore 的 HTTP 服务。"""
 
     def __init__(self, store: EatWhatStore, host: str, port: int,
-                 api_token: str = "", amap_key: str = ""):
+                 api_token: str = "", amap_key: str = "", version: str = ""):
         self.store = store
         self._host = host
         self._port = port
         self._api_token = api_token or ""
         self._amap_key = amap_key or ""
+        self._version = version or ""
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
 
@@ -113,7 +114,10 @@ class EatWhatService:
     # ------------------------------------------------------------------ #
 
     async def _health(self, request: web.Request) -> web.Response:
-        return web.json_response(await asyncio.to_thread(self.store.health))
+        h = await asyncio.to_thread(self.store.health)
+        if self._version:
+            h["version"] = self._version
+        return web.json_response(h)
 
     async def _create_visit(self, request: web.Request) -> web.Response:
         try:
