@@ -199,8 +199,8 @@ public class MainActivity extends Activity {
             Api.io(() -> {
                 try {
                     JSONObject h = Api.health(this);
-                    String v = h.optString("version", "未知版本");
-                    Api.ui(() -> Ui.toast(this, "连接成功（服务端 " + v + "）：餐厅 "
+                    String ver = h.optString("version", "未知版本");
+                    Api.ui(() -> Ui.toast(this, "连接成功（服务端 " + ver + "）：餐厅 "
                             + h.optInt("restaurants") + " · 菜品 " + h.optInt("dishes")
                             + " · 评价 " + h.optInt("reviews")));
                 } catch (final Exception e) {
