@@ -44,11 +44,28 @@
             android:textSize="17sp" />
     </LinearLayout>
 
-    <com.eatwhat.app.StarInput
-        android:id="@+id/star_dish"
-        android:layout_width="wrap_content"
-        android:layout_height="40dp"
+    <com.eatwhat.app.ScoreInput
+        android:id="@+id/score_dish"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:layout_marginTop="4dp" />
+
+    <EditText
+        android:id="@+id/et_dish_tags"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:background="@drawable/bg_input"
+        android:hint="菜品标签（逗号分隔，如 辣,招牌）"
+        android:inputType="text"
+        android:maxLines="1"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:textColor="@color/text_main"
+        android:textColorHint="@color/hint"
+        android:textSize="13sp" />
 
     <EditText
         android:id="@+id/et_dish_comment"

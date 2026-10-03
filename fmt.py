@@ -23,12 +23,13 @@ def mode_label(m: int) -> str:
 
 
 def stars(avg) -> str:
+    """百分制：80 分显示 ★★★★ 80 分。"""
     try:
         avg = float(avg)
     except (TypeError, ValueError):
         return "暂无评分"
-    r = int(round(avg))
-    return "★" * r + "☆" * (5 - r) + f" {avg}"
+    r = max(0, min(5, int(round(avg / 20.0))))
+    return "★" * r + "☆" * (5 - r) + f" {avg:g} 分"
 
 
 def _fmt_restaurant(r: dict, idx=None) -> str:
@@ -40,8 +41,9 @@ def _fmt_restaurant(r: dict, idx=None) -> str:
         parts.append(f"整体{o} 菜品{d}")
     if r.get("address"):
         parts.append(r["address"])
-    if r.get("top_dish"):
-        parts.append(f"招牌:{r['top_dish']}")
+    top = r.get("top_dish") or ""
+    if top:
+        parts.append(f"招牌:{top}")
     if parts:
         line += " ｜ " + " ｜ ".join(parts)
     return line
@@ -145,7 +147,7 @@ def render_area_query(store, area_name: str) -> str:
 
 
 def render_recommend(store, mode: str) -> str:
-    r = store.random_pick(3.5, mode_value(mode))
+    r = store.random_pick(60, mode_value(mode))
     rest, dish = r["restaurant"], r.get("dish")
     lines = [f"推荐：{rest['name']}  {stars(rest.get('avg_rating'))}"]
     if rest.get("address"):

@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS restaurants (
     lat REAL,
     lng REAL,
     area_id INTEGER REFERENCES areas(id),
+    tags TEXT NOT NULL DEFAULT '[]',
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS dishes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
     name TEXT NOT NULL,
+    tags TEXT NOT NULL DEFAULT '[]',
     created_at TEXT DEFAULT (datetime('now', 'localtime')),
     UNIQUE(restaurant_id, name)
 );
@@ -95,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_reviews_mode ON reviews(mode);
 
 # 排名查询：餐厅综合分优先取「整体评价」均分，没有整体评价时退回「菜品评价」均分；mode 筛选堂食/外卖
 _REST_LIST_SQL = """
-SELECT r.id, r.name, r.address, r.lat, r.lng, r.area_id,
+SELECT r.id, r.name, r.address, r.lat, r.lng, r.area_id, r.tags,
        COALESCE(o.avg_rating, d.avg_rating) AS avg_rating,
        COALESCE(o.cnt, 0) AS overall_reviews,
        COALESCE(d.cnt, 0) AS dish_review_count,
@@ -117,15 +119,18 @@ LEFT JOIN (SELECT restaurant_id, ROUND(AVG(rating), 2) AS avg_rating, COUNT(*) A
              GROUP BY restaurant_id) d
        ON d.restaurant_id = r.id
 WHERE COALESCE(o.avg_rating, d.avg_rating) IS NOT NULL
+  AND (:tag = '' OR r.tags LIKE '%' || '"' || :tag || '"' || '%')
   AND (:kw = '' OR r.name LIKE '%' || :kw || '%' OR r.address LIKE '%' || :kw || '%'
+       OR r.tags LIKE '%' || :kw || '%'
        OR EXISTS (SELECT 1 FROM dishes dd WHERE dd.restaurant_id = r.id
-                  AND dd.name LIKE '%' || :kw || '%'))
+                  AND (dd.name LIKE '%' || :kw || '%' OR dd.tags LIKE '%' || :kw || '%')))
 ORDER BY avg_rating DESC, overall_reviews + dish_review_count DESC, r.id ASC
 LIMIT :lim
 """
 
 _DISH_RANK_SQL = """
 SELECT d.id, d.name AS dish_name, d.restaurant_id, r.name AS restaurant_name,
+       d.tags AS dish_tags,
        ROUND(AVG(rv.rating), 2) AS avg_rating, COUNT(*) AS review_count,
        MAX(rv.created_at) AS last_time,
        (SELECT rv2.images FROM reviews rv2 WHERE rv2.dish_id = d.id AND rv2.images != '[]'
@@ -134,7 +139,9 @@ FROM dishes d
 JOIN restaurants r ON r.id = d.restaurant_id
 JOIN reviews rv ON rv.dish_id = d.id
 WHERE (:m = -1 OR rv.mode = :m)
-  AND (:kw = '' OR d.name LIKE '%' || :kw || '%' OR r.name LIKE '%' || :kw || '%')
+  AND (:tag = '' OR d.tags LIKE '%' || '"' || :tag || '"' || '%')
+  AND (:kw = '' OR d.name LIKE '%' || :kw || '%' OR r.name LIKE '%' || :kw || '%'
+       OR d.tags LIKE '%' || :kw || '%')
 GROUP BY d.id
 ORDER BY avg_rating DESC, review_count DESC, d.id ASC
 LIMIT :lim
@@ -154,6 +161,7 @@ FROM (
     FROM dishes d
     JOIN reviews rv ON rv.dish_id = d.id
     WHERE (:m = -1 OR rv.mode = :m)
+      AND (:tag = '' OR d.tags LIKE '%' || '"' || :tag || '"' || '%')
     GROUP BY d.id
 ) t
 JOIN restaurants r ON r.id = t.restaurant_id
@@ -183,9 +191,10 @@ def _opt_float(v):
 
 
 def _rating_ok(v) -> bool:
+    """百分制：1~100 的整数。"""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return False
-    return 1 <= v <= 5 and float(v).is_integer()
+    return 1 <= v <= 100 and float(v).is_integer()
 
 
 def map_urls(lat, lng, name: str, address: str) -> dict:
@@ -222,13 +231,22 @@ class EatWhatStore:
 
     @staticmethod
     def _migrate(conn: sqlite3.Connection):
-        """对旧版本数据库补列（幂等）。"""
+        """对旧版本数据库补列、评分制迁移（幂等）。"""
         rest_cols = {r[1] for r in conn.execute("PRAGMA table_info(restaurants)")}
         if "area_id" not in rest_cols:
             conn.execute("ALTER TABLE restaurants ADD COLUMN area_id INTEGER REFERENCES areas(id)")
+        if "tags" not in rest_cols:
+            conn.execute("ALTER TABLE restaurants ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+        dish_cols = {r[1] for r in conn.execute("PRAGMA table_info(dishes)")}
+        if "tags" not in dish_cols:
+            conn.execute("ALTER TABLE dishes ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
         rev_cols = {r[1] for r in conn.execute("PRAGMA table_info(reviews)")}
         if "mode" not in rev_cols:
             conn.execute("ALTER TABLE reviews ADD COLUMN mode INTEGER NOT NULL DEFAULT 0")
+        # 评分改百分制：旧 1~5 星一次性 ×20（user_version 0 → 1 保证只跑一次）
+        if conn.execute("PRAGMA user_version").fetchone()[0] < 1:
+            conn.execute("UPDATE reviews SET rating = rating * 20 WHERE rating <= 5")
+            conn.execute("PRAGMA user_version = 1")
 
     def close(self):
         pass  # 每次操作独立连接，无需常驻
@@ -385,32 +403,48 @@ class EatWhatStore:
         return cur
 
     @staticmethod
+    def _tags_json(v, what: str) -> Optional[str]:
+        """标签列表校验/序列化：非空列表返回 JSON 文本（用于覆盖写入），否则 None（保留原值）。"""
+        if v is None:
+            return None
+        if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+            raise StoreError(400, f"{what} 的 tags 必须是字符串数组")
+        cleaned = [x.strip() for x in v if x.strip()]
+        return json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+
+    @staticmethod
     def _find_or_create_restaurant(conn, rest: dict, area_id) -> int:
         name = str(rest.get("name") or "").strip()
+        tags = EatWhatStore._tags_json(rest.get("tags"), "餐厅")
         row = conn.execute("SELECT id FROM restaurants WHERE name = ?", (name,)).fetchone()
         if row:
             conn.execute(
                 "UPDATE restaurants SET address = COALESCE(NULLIF(?, ''), address),"
-                " lat = COALESCE(?, lat), lng = COALESCE(?, lng), area_id = COALESCE(?, area_id)"
+                " lat = COALESCE(?, lat), lng = COALESCE(?, lng), area_id = COALESCE(?, area_id),"
+                " tags = COALESCE(?, tags)"
                 " WHERE id = ?",
                 (str(rest.get("address") or "").strip(), _opt_float(rest.get("lat")),
-                 _opt_float(rest.get("lng")), area_id, row["id"]))
+                 _opt_float(rest.get("lng")), area_id, tags, row["id"]))
             return row["id"]
         cur = conn.execute(
-            "INSERT INTO restaurants(name, address, lat, lng, area_id) VALUES (?,?,?,?,?)",
+            "INSERT INTO restaurants(name, address, lat, lng, area_id, tags) VALUES (?,?,?,?,?,?)",
             (name, str(rest.get("address") or "").strip(), _opt_float(rest.get("lat")),
-             _opt_float(rest.get("lng")), area_id))
+             _opt_float(rest.get("lng")), area_id, tags or "[]"))
         return cur.lastrowid
 
     @staticmethod
-    def _find_or_create_dish(conn, rid: int, name: str) -> int:
+    def _find_or_create_dish(conn, rid: int, name: str, tags=None) -> int:
         name = name.strip()
+        tags = EatWhatStore._tags_json(tags, "菜品")
         row = conn.execute("SELECT id FROM dishes WHERE restaurant_id = ? AND name = ?",
                            (rid, name)).fetchone()
         if row:
+            if tags:
+                conn.execute("UPDATE dishes SET tags = ? WHERE id = ?", (tags, row["id"]))
             return row["id"]
-        return conn.execute("INSERT INTO dishes(restaurant_id, name) VALUES (?,?)",
-                            (rid, name)).lastrowid
+        return conn.execute(
+            "INSERT INTO dishes(restaurant_id, name, tags) VALUES (?,?,?)",
+            (rid, name, tags or "[]")).lastrowid
 
     def create_visit(self, payload: dict) -> dict:
         if not isinstance(payload, dict):
@@ -438,10 +472,12 @@ class EatWhatStore:
             if not dn:
                 raise StoreError(400, "菜品名不能为空")
             if not _rating_ok(d.get("rating")):
-                raise StoreError(400, f"菜品「{dn}」评分必须是 1-5 的整数")
+                raise StoreError(400, f"菜品「{dn}」评分必须是 1-100 的整数")
+            self._tags_json(d.get("tags"), f"菜品「{dn}」")
         if overall is not None:
             if not isinstance(overall, dict) or not _rating_ok(overall.get("rating")):
-                raise StoreError(400, "整体评分必须是 1-5 的整数")
+                raise StoreError(400, "整体评分必须是 1-100 的整数")
+        self._tags_json(rest.get("tags"), "餐厅")
 
         def _image_list(v, what):
             if not v:
@@ -455,7 +491,8 @@ class EatWhatStore:
             rid = self._find_or_create_restaurant(conn, rest, area_id)
             n = 0
             for d in dishes:
-                did = self._find_or_create_dish(conn, rid, str(d.get("name")).strip())
+                did = self._find_or_create_dish(conn, rid, str(d.get("name")).strip(),
+                                                d.get("tags"))
                 conn.execute(
                     "INSERT INTO reviews(restaurant_id, dish_id, mode, rating, comment, images)"
                     " VALUES (?,?,?,?,?,?)",
@@ -505,7 +542,7 @@ class EatWhatStore:
                 raise StoreError(404, "评价不存在")
             if rating is not None:
                 if not _rating_ok(rating):
-                    raise StoreError(400, "评分必须是 1-5 的整数")
+                    raise StoreError(400, "评分必须是 1-100 的整数")
                 conn.execute("UPDATE reviews SET rating = ? WHERE id = ?", (int(rating), rid))
             if comment is not None:
                 conn.execute("UPDATE reviews SET comment = ? WHERE id = ?",
@@ -539,14 +576,18 @@ class EatWhatStore:
     # 查询与排名
     # ---------------------------------------------------------------- #
 
-    def _rest_rows(self, conn, keyword: str, limit: int, mode: int = MODE_ALL) -> List[dict]:
+    def _rest_rows(self, conn, keyword: str, limit: int, mode: int = MODE_ALL,
+                   tag: str = "") -> List[dict]:
         rows = conn.execute(_REST_LIST_SQL,
                             {"kw": (keyword or "").strip(), "lim": max(1, min(limit, 200)),
-                             "m": clamp_mode(mode)}).fetchall()
+                             "m": clamp_mode(mode), "tag": (tag or "").strip()}).fetchall()
         out = []
         for x in rows:
             item = dict(x)
             item["images_sample"] = _imgs(item.pop("images_sample"))
+            item["top_dish"] = item.get("top_dish") or ""   # NULL 会变成 "null" 显示
+            item["address"] = item.get("address") or ""
+            item["tags"] = _imgs(item.get("tags"))
             out.append(item)
         return out
 
@@ -554,25 +595,41 @@ class EatWhatStore:
     def _norm_dish(x) -> dict:
         item = dict(x)
         item["images_sample"] = _imgs(item.pop("images_sample"))
+        if "dish_tags" in item:
+            item["tags"] = _imgs(item.pop("dish_tags"))
+        elif "tags" in item:
+            item["tags"] = _imgs(item.get("tags"))
         return item
 
-    def list_restaurants(self, keyword="", limit=50, mode=MODE_ALL) -> List[dict]:
+    def list_restaurants(self, keyword="", limit=50, mode=MODE_ALL, tag="") -> List[dict]:
         with self._lock, self._conn() as conn:
-            return self._rest_rows(conn, str(keyword or ""), int(limit), clamp_mode(mode))
+            return self._rest_rows(conn, str(keyword or ""), int(limit),
+                                   clamp_mode(mode), str(tag or ""))
 
-    def rank_dishes(self, limit=20, keyword="", mode=MODE_ALL) -> List[dict]:
+    def rank_dishes(self, limit=20, keyword="", mode=MODE_ALL, tag="") -> List[dict]:
         with self._lock, self._conn() as conn:
             rows = conn.execute(_DISH_RANK_SQL,
                                 {"kw": str(keyword or ""), "lim": max(1, min(limit, 200)),
-                                 "m": clamp_mode(mode)}).fetchall()
+                                 "m": clamp_mode(mode), "tag": str(tag or "")}).fetchall()
             return [self._norm_dish(x) for x in rows]
 
-    def rank_restaurant_dishes(self, limit=20, mode=MODE_ALL) -> List[dict]:
+    def rank_restaurant_dishes(self, limit=20, mode=MODE_ALL, tag="") -> List[dict]:
         """餐厅菜品排名：每家餐厅分数最高的招牌菜，再横向排名。"""
         with self._lock, self._conn() as conn:
             rows = conn.execute(_SIGNATURE_SQL,
-                                {"lim": max(1, min(limit, 200)), "m": clamp_mode(mode)}).fetchall()
+                                {"lim": max(1, min(limit, 200)), "m": clamp_mode(mode),
+                                 "tag": str(tag or "")}).fetchall()
             return [self._norm_dish(x) for x in rows]
+
+    def list_tags(self) -> dict:
+        """全部已用标签（餐厅 + 菜品），供筛选。"""
+        with self._lock, self._conn() as conn:
+            rtags, dtags = set(), set()
+            for row in conn.execute("SELECT tags FROM restaurants"):
+                rtags.update(_imgs(row["tags"]))
+            for row in conn.execute("SELECT tags FROM dishes"):
+                dtags.update(_imgs(row["tags"]))
+        return {"restaurant": sorted(rtags), "dish": sorted(dtags)}
 
     def restaurant_detail(self, rid: int) -> dict:
         with self._lock, self._conn() as conn:
@@ -584,14 +641,15 @@ class EatWhatStore:
                 "avg_rating": None, "overall_reviews": 0, "dish_review_count": 0,
                 "top_dish": None, "images_sample": []}
             dishes = [self._norm_dish(x) for x in conn.execute(
-                """SELECT d.id, d.name, ROUND(AVG(rv.rating), 2) AS avg_rating,
+                """SELECT d.id, d.name, d.tags, ROUND(AVG(rv.rating), 2) AS avg_rating,
                           COUNT(*) AS review_count, MAX(rv.created_at) AS last_time,
                           (SELECT rv2.images FROM reviews rv2 WHERE rv2.dish_id = d.id
                            AND rv2.images != '[]' ORDER BY rv2.id DESC LIMIT 1) AS images_sample
                    FROM dishes d JOIN reviews rv ON rv.dish_id = d.id
                    WHERE d.restaurant_id = ? GROUP BY d.id
                    ORDER BY avg_rating DESC, review_count DESC""", (rid,)).fetchall()]
-            reviews = [dict(x) | {"images": _imgs(x["images"])} for x in conn.execute(
+            reviews = [dict(x) | {"images": _imgs(x["images"]),
+                                  "dish_name": x["dish_name"] or ""} for x in conn.execute(
                 """SELECT rv.id, rv.dish_id, rv.mode, d.name AS dish_name, rv.rating, rv.comment,
                           rv.images, rv.created_at
                    FROM reviews rv LEFT JOIN dishes d ON d.id = rv.dish_id
@@ -622,6 +680,7 @@ class EatWhatStore:
 
         out = {"id": r["id"], "name": r["name"], "address": r["address"],
                "lat": r["lat"], "lng": r["lng"], "created_at": r["created_at"],
+               "tags": _imgs(r["tags"]),
                "area_id": r["area_id"], "area_name": area_name, "area_path": area_path,
                "dine_in": splits["dine_in"], "delivery": splits["delivery"]}
         out.update(agg)
@@ -629,20 +688,21 @@ class EatWhatStore:
         out.update(map_urls(r["lat"], r["lng"], r["name"], r["address"]))
         return out
 
-    def random_pick(self, min_rating=3.5, mode=MODE_ALL) -> dict:
-        """今天吃什么：按评分加权随机挑一家，附招牌菜。"""
+    def random_pick(self, min_rating=60, mode=MODE_ALL) -> dict:
+        """今天吃什么：按评分加权随机挑一家（百分制，分越高权重越大），附招牌菜。"""
         try:
             min_rating = float(min_rating)
         except (TypeError, ValueError):
-            min_rating = 3.5
+            min_rating = 60
         with self._lock, self._conn() as conn:
             rows = conn.execute(_REST_LIST_SQL,
-                                {"kw": "", "lim": 200, "m": clamp_mode(mode)}).fetchall()
+                                {"kw": "", "lim": 200, "m": clamp_mode(mode),
+                                 "tag": ""}).fetchall()
             if not rows:
                 raise StoreError(404, "还没有任何记录，先去 app 里记一餐吧")
             good = [x for x in rows if x["avg_rating"] is not None and x["avg_rating"] >= min_rating]
             pool = good or rows
-            weights = [max(0.3, x["avg_rating"] - 3.0) for x in pool]
+            weights = [max(5.0, x["avg_rating"] - 60.0) for x in pool]
             pick = random.choices(pool, weights=weights, k=1)[0]
             dish = conn.execute(
                 """SELECT d.name, ROUND(AVG(rv.rating), 2) AS avg_rating

@@ -223,9 +223,20 @@ public class RankTab implements Tab {
                 title = item.optString("name");
                 sub = Ui.score(avg, item.optInt("overall_reviews", 0) + item.optInt("dish_review_count", 0));
                 String addr = item.optString("address", "");
+                if (addr.equals("null")) addr = "";
                 if (!addr.isEmpty()) sub += "  " + addr;
                 String top = item.optString("top_dish", "");
+                if (top.equals("null")) top = "";
                 if (!top.isEmpty()) sub += "\n招牌：" + top;
+                JSONArray rt = item.optJSONArray("tags");
+                if (rt != null && rt.length() > 0) {
+                    StringBuilder tb = new StringBuilder("\n🏷 ");
+                    for (int i = 0; i < rt.length(); i++) {
+                        if (i > 0) tb.append("/");
+                        tb.append(rt.optString(i));
+                    }
+                    sub += tb;
+                }
             } else {
                 title = item.optString("dish_name");
                 sub = Ui.score(avg, count) + " · " + item.optString("restaurant_name", "");

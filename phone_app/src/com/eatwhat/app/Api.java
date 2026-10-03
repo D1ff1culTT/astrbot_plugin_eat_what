@@ -255,9 +255,15 @@ public final class Api {
 
     public static JSONArray restaurants(Context c, String keyword, int limit, int mode,
                                         boolean[] fromCache) throws Exception {
+        return restaurants(c, keyword, limit, mode, fromCache, "");
+    }
+
+    public static JSONArray restaurants(Context c, String keyword, int limit, int mode,
+                                        boolean[] fromCache, String tag) throws Exception {
         return getArrCached(c, "/api/restaurants?limit=" + limit
                 + "&keyword=" + URLEncoder.encode(keyword == null ? "" : keyword, "UTF-8")
-                + "&mode=" + mode, fromCache);
+                + "&mode=" + mode + "&tag=" + URLEncoder.encode(tag == null ? "" : tag, "UTF-8"),
+                fromCache);
     }
 
     public static JSONObject detail(Context c, long id) throws Exception {
@@ -273,7 +279,13 @@ public final class Api {
     }
 
     public static JSONArray rankDishes(Context c, int limit, int mode, boolean[] fromCache) throws Exception {
-        return getArrCached(c, "/api/rank/dishes?limit=" + limit + "&mode=" + mode, fromCache);
+        return rankDishes(c, limit, mode, fromCache, "");
+    }
+
+    public static JSONArray rankDishes(Context c, int limit, int mode, boolean[] fromCache,
+                                       String tag) throws Exception {
+        return getArrCached(c, "/api/rank/dishes?limit=" + limit + "&mode=" + mode
+                + "&tag=" + URLEncoder.encode(tag == null ? "" : tag, "UTF-8"), fromCache);
     }
 
     public static JSONArray signature(Context c, int limit, int mode) throws Exception {
@@ -281,7 +293,18 @@ public final class Api {
     }
 
     public static JSONArray signature(Context c, int limit, int mode, boolean[] fromCache) throws Exception {
-        return getArrCached(c, "/api/rank/restaurant_dishes?limit=" + limit + "&mode=" + mode, fromCache);
+        return signature(c, limit, mode, fromCache, "");
+    }
+
+    public static JSONArray signature(Context c, int limit, int mode, boolean[] fromCache,
+                                      String tag) throws Exception {
+        return getArrCached(c, "/api/rank/restaurant_dishes?limit=" + limit + "&mode=" + mode
+                + "&tag=" + URLEncoder.encode(tag == null ? "" : tag, "UTF-8"), fromCache);
+    }
+
+    /** 全部已用标签（restaurant / dish 两组），供筛选。 */
+    public static JSONObject tags(Context c) throws Exception {
+        return getCached(c, "/api/tags", null);
     }
 
     public static JSONObject randomPick(Context c, int mode) throws Exception {

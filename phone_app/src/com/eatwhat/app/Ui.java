@@ -30,17 +30,24 @@ public final class Ui {
         return pend > 0 ? "本机有 " + pend + " 条记录待同步，联网后自动上传" : defaultText;
     }
 
-    /** 4.6 -> "★★★★★"（四舍五入取整铺星）。 */
+    /** 百分制：80 分显示 ★★★★ 80 分（5 星仅为视觉换算）。 */
     public static String stars(double avg) {
-        int r = (int) Math.round(avg);
+        int r = (int) Math.round(avg / 20.0);
+        r = Math.max(0, Math.min(5, r));
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 5; i++) sb.append(i < r ? '★' : '☆');
+        sb.append(' ').append(num(avg)).append(" 分");
         return sb.toString();
     }
 
-    /** 列表行评分摘要："★ 4.6 · 12 次"。 */
+    /** 列表行评分摘要："83 分 · 12 次"。 */
     public static String score(double avg, int count) {
-        return "★ " + avg + " · " + count + " 次";
+        return num(avg) + " 分 · " + count + " 次";
+    }
+
+    /** 整数不带小数点，小数保留原样。 */
+    public static String num(double v) {
+        return v == Math.rint(v) ? String.valueOf((long) v) : String.valueOf(v);
     }
 
     private Ui() {

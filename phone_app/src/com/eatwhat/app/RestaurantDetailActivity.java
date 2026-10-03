@@ -104,6 +104,21 @@ public class RestaurantDetailActivity extends Activity {
             tvArea.setVisibility(View.GONE);
         }
 
+        // 标签
+        JSONArray restTags = d.optJSONArray("tags");
+        TextView tvTags = findViewById(R.id.tv_tags);
+        if (restTags != null && restTags.length() > 0) {
+            StringBuilder tb = new StringBuilder("🏷 ");
+            for (int i = 0; i < restTags.length(); i++) {
+                if (i > 0) tb.append("/");
+                tb.append(restTags.optString(i));
+            }
+            tvTags.setText(tb.toString());
+            tvTags.setVisibility(View.VISIBLE);
+        } else {
+            tvTags.setVisibility(View.GONE);
+        }
+
         // 堂食 / 外卖 分轨评分
         TextView tvModes = findViewById(R.id.tv_modes);
         tvModes.setText(modeLine("堂食", d.optJSONObject("dine_in")) + "\n"
@@ -144,7 +159,7 @@ public class RestaurantDetailActivity extends Activity {
         if (s == null) return label + " 暂无";
         double avg = s.optDouble("avg", 0);
         int count = s.optInt("count", 0);
-        return avg > 0 ? label + " ★ " + avg + " · " + count + " 次" : label + " 暂无";
+        return avg > 0 ? label + " " + Ui.num(avg) + " 分 · " + count + " 次" : label + " 暂无";
     }
 
     private void reviewMenu(final JSONObject rv) {
@@ -163,9 +178,9 @@ public class RestaurantDetailActivity extends Activity {
         int pad = Ui.dp(this, 22);
         box.setPadding(pad, Ui.dp(this, 12), pad, 0);
 
-        final StarInput star = new StarInput(this);
-        star.setRating(rv.optInt("rating", 0));
-        box.addView(star);
+        final ScoreInput score = new ScoreInput(this);
+        score.setScore(rv.optInt("rating", 0));
+        box.addView(score);
 
         LinearLayout modes = new LinearLayout(this);
         modes.setOrientation(LinearLayout.HORIZONTAL);
@@ -210,7 +225,7 @@ public class RestaurantDetailActivity extends Activity {
                 .setTitle("修改评价")
                 .setView(box)
                 .setPositiveButton("保存", (d, w) -> {
-                    int rating = star.getRating();
+                    int rating = score.getScore();
                     if (rating == 0) {
                         Ui.toast(this, "请先打分");
                         return;
@@ -331,7 +346,17 @@ public class RestaurantDetailActivity extends Activity {
         mid.addView(tvName);
 
         TextView tvSub = new TextView(this);
-        tvSub.setText(Ui.score(dish.optDouble("avg_rating", 0), dish.optInt("review_count", 0)));
+        String dsub = Ui.score(dish.optDouble("avg_rating", 0), dish.optInt("review_count", 0));
+        JSONArray dtags = dish.optJSONArray("tags");
+        if (dtags != null && dtags.length() > 0) {
+            StringBuilder tb = new StringBuilder("  🏷 ");
+            for (int i = 0; i < dtags.length(); i++) {
+                if (i > 0) tb.append("/");
+                tb.append(dtags.optString(i));
+            }
+            dsub += tb;
+        }
+        tvSub.setText(dsub);
         tvSub.setTextColor(Color.parseColor("#9A8F87"));
         tvSub.setTextSize(13);
         LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
@@ -373,6 +398,7 @@ public class RestaurantDetailActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         String dishName = rv.optString("dish_name", "");
+        if (dishName.equals("null")) dishName = "";
         String prefix = rv.optInt("mode", 0) == 1 ? "外卖 · " : "";
         TextView tag = new TextView(this);
         tag.setText(prefix + (dishName.isEmpty() ? "整体评价" : "菜品 · " + dishName));

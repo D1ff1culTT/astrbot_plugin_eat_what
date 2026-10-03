@@ -59,6 +59,7 @@ class EatWhatService:
         app.router.add_get("/api/rank/dishes", self._rank_dishes)
         app.router.add_get("/api/rank/restaurant_dishes", self._rank_restaurant_dishes)
         app.router.add_get("/api/random", self._random)
+        app.router.add_get("/api/tags", self._tags)
         app.router.add_get("/api/geocode", self._geocode)
         app.router.add_get("/api/export", self._export)
 
@@ -187,7 +188,8 @@ class EatWhatService:
                 self.store.list_restaurants,
                 self._query(request, "keyword"),
                 int(self._query(request, "limit", 50)),
-                clamp_mode(self._query(request, "mode", -1)))
+                clamp_mode(self._query(request, "mode", -1)),
+                self._query(request, "tag"))
             return web.json_response(rows)
         except (TypeError, ValueError):
             return web.json_response({"detail": "limit 参数无效"}, status=400)
@@ -207,7 +209,8 @@ class EatWhatService:
             rows = await asyncio.to_thread(
                 self.store.list_restaurants, "",
                 int(self._query(request, "limit", 20)),
-                clamp_mode(self._query(request, "mode", -1)))
+                clamp_mode(self._query(request, "mode", -1)),
+                self._query(request, "tag"))
             return web.json_response(rows)
         except (TypeError, ValueError):
             return web.json_response({"detail": "limit 参数无效"}, status=400)
@@ -218,7 +221,8 @@ class EatWhatService:
                 self.store.rank_dishes,
                 int(self._query(request, "limit", 20)),
                 self._query(request, "keyword"),
-                clamp_mode(self._query(request, "mode", -1)))
+                clamp_mode(self._query(request, "mode", -1)),
+                self._query(request, "tag"))
             return web.json_response(rows)
         except (TypeError, ValueError):
             return web.json_response({"detail": "limit 参数无效"}, status=400)
@@ -228,7 +232,8 @@ class EatWhatService:
             rows = await asyncio.to_thread(
                 self.store.rank_restaurant_dishes,
                 int(self._query(request, "limit", 20)),
-                clamp_mode(self._query(request, "mode", -1)))
+                clamp_mode(self._query(request, "mode", -1)),
+                self._query(request, "tag"))
             return web.json_response(rows)
         except (TypeError, ValueError):
             return web.json_response({"detail": "limit 参数无效"}, status=400)
@@ -237,11 +242,14 @@ class EatWhatService:
         try:
             result = await asyncio.to_thread(
                 self.store.random_pick,
-                self._query(request, "min_rating", 3.5),
+                self._query(request, "min_rating", 60),
                 clamp_mode(self._query(request, "mode", -1)))
             return web.json_response(result)
         except StoreError as e:
             return self._err(e)
+
+    async def _tags(self, request: web.Request) -> web.Response:
+        return web.json_response(await asyncio.to_thread(self.store.list_tags))
 
     async def _geocode(self, request: web.Request) -> web.Response:
         """坐标 -> 地址文本。优先高德（配置 amap_key），否则 OSM Nominatim；失败返回 null。"""

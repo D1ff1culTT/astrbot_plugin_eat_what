@@ -44,8 +44,8 @@ public class RecordTab implements Tab {
 
     private AutoCompleteTextView actRestaurant;
     private TextView btnLocate, tvCoords, btnSave;
-    private EditText etAddress, etOverall;
-    private StarInput starOverall;
+    private EditText etAddress, etOverall, etRtags;
+    private ScoreInput scoreOverall;
     private LinearLayout llDishes;
     private final List<DishCard> cards = new ArrayList<>();
     private final SuggestAdapter suggest;
@@ -85,8 +85,9 @@ public class RecordTab implements Tab {
     private static class DishCard {
         View view;
         EditText name;
-        StarInput star;
+        ScoreInput score;
         EditText comment;
+        EditText tags;
         LinearLayout photos;
         final List<File> files = new ArrayList<>();
     }
@@ -105,7 +106,8 @@ public class RecordTab implements Tab {
         tvCoords = root.findViewById(R.id.tv_coords);
         etAddress = root.findViewById(R.id.et_address);
         etOverall = root.findViewById(R.id.et_overall);
-        starOverall = root.findViewById(R.id.star_overall);
+        scoreOverall = root.findViewById(R.id.score_overall);
+        etRtags = root.findViewById(R.id.et_rtags);
         llDishes = root.findViewById(R.id.ll_dishes);
         btnSave = root.findViewById(R.id.btn_save);
 
@@ -302,8 +304,9 @@ public class RecordTab implements Tab {
         final DishCard card = new DishCard();
         card.view = LayoutInflater.from(act).inflate(R.layout.dish_card, llDishes, false);
         card.name = card.view.findViewById(R.id.et_dish_name);
-        card.star = card.view.findViewById(R.id.star_dish);
+        card.score = card.view.findViewById(R.id.score_dish);
         card.comment = card.view.findViewById(R.id.et_dish_comment);
+        card.tags = card.view.findViewById(R.id.et_dish_tags);
         card.photos = card.view.findViewById(R.id.ll_photos);
 
         card.view.findViewById(R.id.btn_del_dish).setOnClickListener(v -> {
@@ -460,12 +463,12 @@ public class RecordTab implements Tab {
         }
         for (DishCard card : cards) {
             String n = card.name.getText().toString().trim();
-            if (!n.isEmpty() && card.star.getRating() == 0) {
+            if (!n.isEmpty() && card.score.getScore() == 0) {
                 Ui.toast(act, "请给「" + n + "」打分");
                 return;
             }
         }
-        final int overall = starOverall.getRating();
+        final int overall = scoreOverall.getScore();
         boolean hasDish = false;
         for (DishCard card : cards) {
             if (!card.name.getText().toString().trim().isEmpty()) hasDish = true;
@@ -491,8 +494,9 @@ public class RecordTab implements Tab {
                     photoFiles.add(fs);
                     JSONObject d = new JSONObject();
                     d.put("name", n);
-                    d.put("rating", card.star.getRating());
+                    d.put("rating", card.score.getScore());
                     d.put("comment", card.comment.getText().toString().trim());
+                    d.put("tags", splitTags(card.tags.getText().toString()));
                     d.put("images", new JSONArray());
                     dishArr.put(d);
                 }
@@ -558,6 +562,7 @@ public class RecordTab implements Tab {
         JSONObject rest = new JSONObject();
         rest.put("name", restName);
         rest.put("address", etAddress.getText().toString().trim());
+        rest.put("tags", splitTags(etRtags.getText().toString()));
         if (areaId > 0) rest.put("area_id", areaId);
         if (!Double.isNaN(lat)) {
             rest.put("lat", lat);
@@ -576,12 +581,23 @@ public class RecordTab implements Tab {
         return payload;
     }
 
+    private static JSONArray splitTags(String s) {
+        JSONArray arr = new JSONArray();
+        if (s == null || s.trim().isEmpty()) return arr;
+        for (String t : s.split("[,，]")) {
+            String x = t.trim();
+            if (!x.isEmpty()) arr.put(x);
+        }
+        return arr;
+    }
+
     private void resetForm() {
         silent = true;
         actRestaurant.setText("");
         etAddress.setText("");
         etOverall.setText("");
-        starOverall.setRating(0);
+        etRtags.setText("");
+        scoreOverall.setScore(0);
         tvCoords.setText("");
         lat = lng = Double.NaN;
         areaId = 0;
