@@ -258,7 +258,7 @@ public class MainActivity extends Activity {
 
         TextView tvStars = new TextView(this);
         double avg = rest.optDouble("avg_rating", 0);
-        tvStars.setText(avg > 0 ? Ui.stars(avg) + "  " + avg : "暂无评分");
+        tvStars.setText(avg > 0 ? Ui.stars(avg) : "暂无评分");
         tvStars.setTextColor(Color.parseColor("#FFB300"));
         tvStars.setTextSize(16);
         LinearLayout.LayoutParams starsLp = new LinearLayout.LayoutParams(

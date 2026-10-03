@@ -79,7 +79,7 @@ public class RestaurantDetailActivity extends Activity {
 
         double avg = d.optDouble("avg_rating", 0);
         ((TextView) findViewById(R.id.tv_stars)).setText(
-                avg > 0 ? Ui.stars(avg) + "  " + avg : "暂无评分");
+                avg > 0 ? Ui.stars(avg) : "暂无评分");
         ((TextView) findViewById(R.id.tv_count)).setText(
                 "整体 " + d.optInt("overall_reviews", 0)
                         + " · 菜品 " + d.optInt("dish_review_count", 0));

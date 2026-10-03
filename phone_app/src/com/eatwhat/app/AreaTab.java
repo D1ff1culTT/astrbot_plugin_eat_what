@@ -173,7 +173,7 @@ public class AreaTab implements Tab {
             tvSub.setTextColor(0xFF9A8F87);
             tvSub.setTextSize(13);
             double avg = item.optDouble("avg_rating", 0);
-            String sub = avg > 0 ? "★ " + avg + " · 整体 " + item.optInt("overall_reviews", 0)
+            String sub = avg > 0 ? "★ " + Ui.num(avg) + " · 整体 " + item.optInt("overall_reviews", 0)
                     + " · 菜品 " + item.optInt("dish_review_count", 0)
                     : "暂无评分";
             sub += " · 餐厅 " + item.optInt("restaurant_count", 0);

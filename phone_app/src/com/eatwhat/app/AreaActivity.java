@@ -74,7 +74,7 @@ public class AreaActivity extends Activity {
         TextView tvMeta = findViewById(R.id.tv_meta);
         if (area != null) {
             double avg = area.optDouble("avg_rating", 0);
-            tvScore.setText(avg > 0 ? Ui.stars(avg) + "  " + avg : "暂无评分");
+            tvScore.setText(avg > 0 ? Ui.stars(avg) : "暂无评分");
             tvMeta.setText("餐厅 " + area.optInt("restaurant_count", 0)
                     + " · 整体评价 " + area.optInt("overall_reviews", 0)
                     + " · 菜品评价 " + area.optInt("dish_review_count", 0));
@@ -175,7 +175,7 @@ public class AreaActivity extends Activity {
 
         TextView tvSub = new TextView(this);
         double avg = child.optDouble("avg_rating", 0);
-        tvSub.setText((avg > 0 ? "★ " + avg + " · " : "暂无评分 · ")
+        tvSub.setText((avg > 0 ? "★ " + Ui.num(avg) + " · " : "暂无评分 · ")
                 + "餐厅 " + child.optInt("restaurant_count", 0));
         tvSub.setTextColor(Color.parseColor("#9A8F87"));
         tvSub.setTextSize(13);

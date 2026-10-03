@@ -96,9 +96,10 @@ CREATE INDEX IF NOT EXISTS idx_reviews_mode ON reviews(mode);
 """
 
 # 排名查询：餐厅综合分优先取「整体评价」均分，没有整体评价时退回「菜品评价」均分；mode 筛选堂食/外卖
+# 餐厅评分 = 其全部评价（整体+菜品）的平均分，每条新评价都会影响分数
 _REST_LIST_SQL = """
 SELECT r.id, r.name, r.address, r.lat, r.lng, r.area_id, r.tags,
-       COALESCE(o.avg_rating, d.avg_rating) AS avg_rating,
+       a.avg_rating AS avg_rating,
        COALESCE(o.cnt, 0) AS overall_reviews,
        COALESCE(d.cnt, 0) AS dish_review_count,
        (SELECT d2.name FROM dishes d2
@@ -110,21 +111,24 @@ SELECT r.id, r.name, r.address, r.lat, r.lng, r.area_id, r.tags,
          WHERE rv3.restaurant_id = r.id AND rv3.images != '[]'
          ORDER BY rv3.id DESC LIMIT 1) AS images_sample
 FROM restaurants r
-LEFT JOIN (SELECT restaurant_id, ROUND(AVG(rating), 2) AS avg_rating, COUNT(*) AS cnt
+JOIN (SELECT restaurant_id, ROUND(AVG(rating), 2) AS avg_rating
+        FROM reviews WHERE (:m = -1 OR mode = :m)
+        GROUP BY restaurant_id) a
+       ON a.restaurant_id = r.id
+LEFT JOIN (SELECT restaurant_id, COUNT(*) AS cnt
              FROM reviews WHERE dish_id IS NULL AND (:m = -1 OR mode = :m)
              GROUP BY restaurant_id) o
        ON o.restaurant_id = r.id
-LEFT JOIN (SELECT restaurant_id, ROUND(AVG(rating), 2) AS avg_rating, COUNT(*) AS cnt
+LEFT JOIN (SELECT restaurant_id, COUNT(*) AS cnt
              FROM reviews WHERE dish_id IS NOT NULL AND (:m = -1 OR mode = :m)
              GROUP BY restaurant_id) d
        ON d.restaurant_id = r.id
-WHERE COALESCE(o.avg_rating, d.avg_rating) IS NOT NULL
-  AND (:tag = '' OR r.tags LIKE '%' || '"' || :tag || '"' || '%')
+WHERE (:tag = '' OR r.tags LIKE '%' || '"' || :tag || '"' || '%')
   AND (:kw = '' OR r.name LIKE '%' || :kw || '%' OR r.address LIKE '%' || :kw || '%'
        OR r.tags LIKE '%' || :kw || '%'
        OR EXISTS (SELECT 1 FROM dishes dd WHERE dd.restaurant_id = r.id
                   AND (dd.name LIKE '%' || :kw || '%' OR dd.tags LIKE '%' || :kw || '%')))
-ORDER BY avg_rating DESC, overall_reviews + dish_review_count DESC, r.id ASC
+ORDER BY a.avg_rating DESC, COALESCE(o.cnt, 0) + COALESCE(d.cnt, 0) DESC, r.id ASC
 LIMIT :lim
 """
 
@@ -281,7 +285,7 @@ class EatWhatStore:
         return chain  # 自下而上
 
     def _area_stats(self, conn, children_of, root_id: int, mode: int) -> dict:
-        """某区块子树的聚合评分（整体评价优先，无则退回菜品评价），可按堂食/外卖筛选。"""
+        """区块子树聚合：评分 = 子树内全部评价（整体+菜品）的平均分，可按堂食/外卖筛选。"""
         ids = sorted(self._subtree_ids(children_of, root_id))
         if not ids:
             return {"avg_rating": None, "overall_reviews": 0, "dish_review_count": 0,
@@ -291,16 +295,15 @@ class EatWhatStore:
         row = conn.execute(
             f"""SELECT
                 (SELECT COUNT(*) FROM restaurants WHERE area_id IN ({ph})) r_cnt,
-                (SELECT ROUND(AVG(rv.rating), 2) FROM reviews rv JOIN restaurants r ON r.id = rv.restaurant_id
-                  WHERE r.area_id IN ({ph}) AND rv.dish_id IS NULL{msql}) o_avg,
+                (SELECT ROUND(AVG(rv.rating), 2) FROM reviews rv
+                  JOIN restaurants r ON r.id = rv.restaurant_id
+                  WHERE r.area_id IN ({ph}){msql}) avg_all,
                 (SELECT COUNT(*) FROM reviews rv JOIN restaurants r ON r.id = rv.restaurant_id
                   WHERE r.area_id IN ({ph}) AND rv.dish_id IS NULL{msql}) o_cnt,
-                (SELECT ROUND(AVG(rv.rating), 2) FROM reviews rv JOIN restaurants r ON r.id = rv.restaurant_id
-                  WHERE r.area_id IN ({ph}) AND rv.dish_id IS NOT NULL{msql}) d_avg,
                 (SELECT COUNT(*) FROM reviews rv JOIN restaurants r ON r.id = rv.restaurant_id
                   WHERE r.area_id IN ({ph}) AND rv.dish_id IS NOT NULL{msql}) d_cnt""",
-            ids * 5).fetchone()
-        return {"avg_rating": row["o_avg"] if row["o_cnt"] else row["d_avg"],
+            ids * 4).fetchone()
+        return {"avg_rating": row["avg_all"],
                 "overall_reviews": row["o_cnt"], "dish_review_count": row["d_cnt"],
                 "restaurant_count": row["r_cnt"]}
 
@@ -655,22 +658,14 @@ class EatWhatStore:
                    FROM reviews rv LEFT JOIN dishes d ON d.id = rv.dish_id
                    WHERE rv.restaurant_id = ? ORDER BY rv.id DESC LIMIT 30""", (rid,)).fetchall()]
 
-            # 堂食 / 外卖 分轨统计（整体评价优先，无则退回菜品评价）
+            # 堂食 / 外卖 分轨统计（该模式全部评价的平均分）
             splits = {}
             for m, key in ((MODE_DINE_IN, "dine_in"), (MODE_DELIVERY, "delivery")):
                 row = conn.execute(
-                    """SELECT
-                         (SELECT ROUND(AVG(rating), 2) FROM reviews
-                           WHERE restaurant_id = :r AND mode = :m AND dish_id IS NULL) o_avg,
-                         (SELECT COUNT(*) FROM reviews
-                           WHERE restaurant_id = :r AND mode = :m AND dish_id IS NULL) o_cnt,
-                         (SELECT ROUND(AVG(rating), 2) FROM reviews
-                           WHERE restaurant_id = :r AND mode = :m AND dish_id IS NOT NULL) d_avg,
-                         (SELECT COUNT(*) FROM reviews
-                           WHERE restaurant_id = :r AND mode = :m AND dish_id IS NOT NULL) d_cnt""",
+                    """SELECT ROUND(AVG(rating), 2) AS avg_all, COUNT(*) AS cnt
+                       FROM reviews WHERE restaurant_id = :r AND mode = :m""",
                     {"r": rid, "m": m}).fetchone()
-                splits[key] = {"avg": row["o_avg"] if row["o_cnt"] else row["d_avg"],
-                               "count": row["o_cnt"] + row["d_cnt"]}
+                splits[key] = {"avg": row["avg_all"], "count": row["cnt"]}
 
             area_path, area_name = [], ""
             if r["area_id"]:
