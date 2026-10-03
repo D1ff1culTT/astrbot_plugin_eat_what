@@ -6,7 +6,10 @@
 """
 from __future__ import annotations
 
-from store import StoreError
+try:  # AstrBot 以包形式加载插件；独立测试时退回绝对导入
+    from .store import StoreError
+except ImportError:  # noqa: F401
+    from store import StoreError
 
 _MODE_MAP = {"全部": -1, "堂食": 0, "外卖": 1}
 

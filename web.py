@@ -14,7 +14,10 @@ from typing import Optional
 
 from aiohttp import ClientSession, ClientTimeout, web
 
-from store import StoreError, clamp_mode, EatWhatStore
+try:  # AstrBot 以包形式加载插件；独立测试时退回绝对导入
+    from .store import EatWhatStore, StoreError, clamp_mode
+except ImportError:  # noqa: F401
+    from store import EatWhatStore, StoreError, clamp_mode
 
 
 class EatWhatService:
