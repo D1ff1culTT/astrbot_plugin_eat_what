@@ -104,6 +104,20 @@ public class RestaurantDetailActivity extends Activity {
             tvArea.setVisibility(View.GONE);
         }
 
+        // 人均消费与性价比
+        TextView tvPrice = findViewById(R.id.tv_price);
+        if (d.isNull("avg_price")) {
+            tvPrice.setVisibility(View.GONE);
+        } else {
+            double ap = d.optDouble("avg_price", 0);
+            String line = "均消费 ¥" + Ui.num(ap);
+            if (!d.isNull("value")) {
+                line += " · 性价比 " + Ui.num(d.optDouble("value", 0)) + "（每10元）";
+            }
+            tvPrice.setText(line);
+            tvPrice.setVisibility(View.VISIBLE);
+        }
+
         // 标签
         JSONArray restTags = d.optJSONArray("tags");
         TextView tvTags = findViewById(R.id.tv_tags);
@@ -221,6 +235,19 @@ public class RestaurantDetailActivity extends Activity {
         etLp.topMargin = Ui.dp(this, 10);
         box.addView(et, etLp);
 
+        final EditText etPrice = new EditText(this);
+        etPrice.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        etPrice.setHint("实付价格（元，可选）");
+        etPrice.setTextColor(Color.parseColor("#2B2320"));
+        if (!rv.isNull("price")) {
+            etPrice.setText(Ui.num(rv.optDouble("price", 0)));
+        }
+        LinearLayout.LayoutParams priceLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        priceLp.topMargin = Ui.dp(this, 8);
+        box.addView(etPrice, priceLp);
+
         new AlertDialog.Builder(this)
                 .setTitle("修改评价")
                 .setView(box)
@@ -234,7 +261,8 @@ public class RestaurantDetailActivity extends Activity {
                     Api.io(() -> {
                         try {
                             Api.updateReview(this, rid, rating,
-                                    et.getText().toString().trim(), selMode[0]);
+                                    et.getText().toString().trim(), selMode[0],
+                                    parsePrice(etPrice.getText().toString()));
                             Api.ui(() -> {
                                 Ui.toast(this, "已修改 ✓");
                                 load();
@@ -246,6 +274,16 @@ public class RestaurantDetailActivity extends Activity {
                 })
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    private Double parsePrice(String s) {
+        if (s == null || s.trim().isEmpty()) return null;
+        try {
+            double v = Double.parseDouble(s.trim());
+            return v < 0 ? null : v;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private TextView modeChip(String label) {
@@ -347,6 +385,9 @@ public class RestaurantDetailActivity extends Activity {
 
         TextView tvSub = new TextView(this);
         String dsub = Ui.score(dish.optDouble("avg_rating", 0), dish.optInt("review_count", 0));
+        if (!dish.isNull("price")) {
+            dsub += " · ¥" + Ui.num(dish.optDouble("price", 0));
+        }
         JSONArray dtags = dish.optJSONArray("tags");
         if (dtags != null && dtags.length() > 0) {
             StringBuilder tb = new StringBuilder("  🏷 ");

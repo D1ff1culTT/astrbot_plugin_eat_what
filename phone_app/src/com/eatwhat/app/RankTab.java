@@ -30,11 +30,14 @@ public class RankTab implements Tab {
     private ListView lv;
     private View empty;
     private TextView banner;
-    private TextView chipRest, chipDish, chipSign;
+    private TextView chipRest, chipDish, chipSign, chipValue;
     private TextView chipModeAll, chipModeIn, chipModeOut;
     private int mode = 0;
     private int modeFilter = -1;
     private boolean loading;
+    private LinearLayout llTagChips;
+    private String tagFilter = "";
+    private final List<android.util.Pair<TextView, String>> tagChips = new ArrayList<>();
     private final List<JSONObject> data = new ArrayList<>();
     private RankAdapter adapter;
 
@@ -52,13 +55,16 @@ public class RankTab implements Tab {
         chipRest = root.findViewById(R.id.chip_rest);
         chipDish = root.findViewById(R.id.chip_dish);
         chipSign = root.findViewById(R.id.chip_sign);
+        chipValue = root.findViewById(R.id.chip_value);
         chipModeAll = root.findViewById(R.id.chip_mode_all);
         chipModeIn = root.findViewById(R.id.chip_mode_in);
         chipModeOut = root.findViewById(R.id.chip_mode_out);
+        llTagChips = root.findViewById(R.id.ll_tag_chips);
 
         chipRest.setOnClickListener(v -> switchMode(0));
         chipDish.setOnClickListener(v -> switchMode(1));
         chipSign.setOnClickListener(v -> switchMode(2));
+        chipValue.setOnClickListener(v -> switchMode(3));
         chipModeAll.setOnClickListener(v -> switchModeFilter(-1));
         chipModeIn.setOnClickListener(v -> switchModeFilter(0));
         chipModeOut.setOnClickListener(v -> switchModeFilter(1));
@@ -92,7 +98,7 @@ public class RankTab implements Tab {
     }
 
     private void styleChips() {
-        TextView[] chips = {chipRest, chipDish, chipSign};
+        TextView[] chips = {chipRest, chipDish, chipSign, chipValue};
         for (int i = 0; i < chips.length; i++) {
             boolean on = i == mode;
             chips[i].setBackgroundResource(on ? R.drawable.chip_on : R.drawable.chip_off);
@@ -115,22 +121,30 @@ public class RankTab implements Tab {
         Api.io(() -> {
             String err = null;
             boolean fromCache = false;
+            JSONObject tags = null;
             List<JSONObject> l = new ArrayList<>();
             try {
                 final boolean[] cached = new boolean[1];
-                JSONArray arr = mode == 0 ? Api.restaurants(act, "", 50, modeFilter, cached)
-                        : mode == 1 ? Api.rankDishes(act, 50, modeFilter, cached)
-                        : Api.signature(act, 50, modeFilter, cached);
+                JSONArray arr = mode == 0 ? Api.restaurants(act, "", 50, modeFilter, cached, tagFilter)
+                        : mode == 1 ? Api.rankDishes(act, 50, modeFilter, cached, tagFilter)
+                        : mode == 2 ? Api.signature(act, 50, modeFilter, cached, tagFilter)
+                        : Api.valueDishes(act, 50, modeFilter, cached, tagFilter);
                 for (int i = 0; i < arr.length(); i++) l.add(arr.getJSONObject(i));
                 fromCache = cached[0];
+                try {
+                    tags = Api.tags(act);
+                } catch (Exception ignored) {
+                }
             } catch (Exception e) {
                 err = e.getMessage() == null ? "网络错误" : e.getMessage();
             }
             final List<JSONObject> res = l;
             final String fErr = err;
             final boolean fc = fromCache;
+            final JSONObject fTags = tags;
             Api.ui(() -> {
                 loading = false;
+                if (fTags != null) buildTagChips(fTags);
                 if (fErr != null) {
                     Ui.banner(banner, true, "⚠ 加载失败：" + fErr + "（点击重试）");
                     banner.setOnClickListener(v -> refresh());
@@ -150,6 +164,41 @@ public class RankTab implements Tab {
                 }
             });
         });
+    }
+
+    private void buildTagChips(JSONObject tags) {
+        JSONArray arr = mode == 0 ? tags.optJSONArray("restaurant") : tags.optJSONArray("dish");
+        if (arr == null) arr = new JSONArray();
+        llTagChips.removeAllViews();
+        tagChips.clear();
+        addTagChip("全部", "");
+        for (int i = 0; i < arr.length(); i++) addTagChip(arr.optString(i), arr.optString(i));
+        restyleTagChips();
+    }
+
+    private void addTagChip(String label, String value) {
+        TextView t = new TextView(act);
+        t.setText(label);
+        t.setTextSize(13);
+        t.setPadding(Ui.dp(act, 14), Ui.dp(act, 5), Ui.dp(act, 14), Ui.dp(act, 5));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.rightMargin = Ui.dp(act, 8);
+        llTagChips.addView(t, lp);
+        t.setOnClickListener(v -> {
+            tagFilter = value;
+            restyleTagChips();
+            refresh();
+        });
+        tagChips.add(new android.util.Pair<>(t, value));
+    }
+
+    private void restyleTagChips() {
+        for (android.util.Pair<TextView, String> p : tagChips) {
+            boolean on = p.second.equals(tagFilter);
+            p.first.setBackgroundResource(on ? R.drawable.chip_on : R.drawable.chip_off);
+            p.first.setTextColor(on ? 0xFFFFFFFF : 0xFF2B2320);
+        }
     }
 
     private class RankAdapter extends BaseAdapter {
@@ -219,7 +268,12 @@ public class RankTab implements Tab {
             String title, sub;
             double avg = item.optDouble("avg_rating", 0);
             int count = item.optInt("review_count", 0);
-            if (mode == 0) {
+            if (mode == 3) {
+                title = item.optString("dish_name");
+                sub = Ui.score(avg, count) + " · ¥" + Ui.num(item.optDouble("price", 0))
+                        + " · 性价比 " + Ui.num(item.optDouble("value", 0))
+                        + " · " + item.optString("restaurant_name", "");
+            } else if (mode == 0) {
                 title = item.optString("name");
                 sub = Ui.score(avg, item.optInt("overall_reviews", 0) + item.optInt("dish_review_count", 0));
                 String addr = item.optString("address", "");

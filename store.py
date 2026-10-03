@@ -201,6 +201,27 @@ def _rating_ok(v) -> bool:
     return 1 <= v <= 100 and float(v).is_integer()
 
 
+def _price_fields(d: dict, what: str):
+    """解析价格字段：price 实付；外卖可给 原价/券/返现，未填 price 时自动算实付。"""
+    price = _opt_float(d.get("price"))
+    orig = _opt_float(d.get("orig_price"))
+    disc = _opt_float(d.get("discount"))
+    cash = _opt_float(d.get("cashback"))
+    for v, label in ((price, "price"), (orig, "orig_price"),
+                     (disc, "discount"), (cash, "cashback")):
+        if v is not None and v < 0:
+            raise StoreError(400, f"{what} 的 {label} 不能为负数")
+    if orig is not None:
+        off = (disc or 0) + (cash or 0)
+        if off > orig:
+            raise StoreError(400, f"{what} 的 券+返现 不能超过原价")
+        if price is None:
+            price = round(orig - off, 2)
+    if price is not None and price < 0:
+        raise StoreError(400, f"{what} 的 实付价格 不能为负数")
+    return price, orig, disc, cash
+
+
 def map_urls(lat, lng, name: str, address: str) -> dict:
     """地图呈现：有坐标给高德标点（app 内优先唤起高德，网页兜底），只有地址则给搜索页。"""
     urls = {}
@@ -247,6 +268,10 @@ class EatWhatStore:
         rev_cols = {r[1] for r in conn.execute("PRAGMA table_info(reviews)")}
         if "mode" not in rev_cols:
             conn.execute("ALTER TABLE reviews ADD COLUMN mode INTEGER NOT NULL DEFAULT 0")
+        # 价格（记在评价上，保留历史；外卖可记 原价/券/返现）
+        for col in ("price", "orig_price", "discount", "cashback"):
+            if col not in rev_cols:
+                conn.execute(f"ALTER TABLE reviews ADD COLUMN {col} REAL")
         # 评分改百分制：旧 1~5 星一次性 ×20（user_version 0 → 1 保证只跑一次）
         if conn.execute("PRAGMA user_version").fetchone()[0] < 1:
             conn.execute("UPDATE reviews SET rating = rating * 20 WHERE rating <= 5")
@@ -477,9 +502,11 @@ class EatWhatStore:
             if not _rating_ok(d.get("rating")):
                 raise StoreError(400, f"菜品「{dn}」评分必须是 1-100 的整数")
             self._tags_json(d.get("tags"), f"菜品「{dn}」")
+            _price_fields(d, f"菜品「{dn}」")
         if overall is not None:
             if not isinstance(overall, dict) or not _rating_ok(overall.get("rating")):
                 raise StoreError(400, "整体评分必须是 1-100 的整数")
+            _price_fields(overall, "整体评价")
         self._tags_json(rest.get("tags"), "餐厅")
 
         def _image_list(v, what):
@@ -496,20 +523,23 @@ class EatWhatStore:
             for d in dishes:
                 did = self._find_or_create_dish(conn, rid, str(d.get("name")).strip(),
                                                 d.get("tags"))
+                price, orig, disc, cash = _price_fields(d, f"菜品「{d.get('name')}」")
                 conn.execute(
-                    "INSERT INTO reviews(restaurant_id, dish_id, mode, rating, comment, images)"
-                    " VALUES (?,?,?,?,?,?)",
+                    "INSERT INTO reviews(restaurant_id, dish_id, mode, rating, comment, images,"
+                    " price, orig_price, discount, cashback) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (rid, did, mode, int(d["rating"]), str(d.get("comment") or "").strip(),
                      json.dumps(_image_list(d.get("images"), f"菜品「{d.get('name')}」"),
-                                ensure_ascii=False)))
+                                ensure_ascii=False), price, orig, disc, cash))
                 n += 1
             if overall is not None:
+                price, orig, disc, cash = _price_fields(overall, "整体评价")
                 conn.execute(
-                    "INSERT INTO reviews(restaurant_id, dish_id, mode, rating, comment, images)"
-                    " VALUES (?,?,?,?,?,?)",
+                    "INSERT INTO reviews(restaurant_id, dish_id, mode, rating, comment, images,"
+                    " price, orig_price, discount, cashback) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (rid, None, mode, int(overall["rating"]),
                      str(overall.get("comment") or "").strip(),
-                     json.dumps(_image_list(overall.get("images"), "整体评价"), ensure_ascii=False)))
+                     json.dumps(_image_list(overall.get("images"), "整体评价"), ensure_ascii=False),
+                     price, orig, disc, cash))
                 n += 1
         return {"ok": True, "restaurant_id": rid, "review_count": n, "mode": mode}
 
@@ -532,13 +562,17 @@ class EatWhatStore:
     # ---------------------------------------------------------------- #
 
     def update_review(self, rid: int, payload: dict) -> dict:
-        """修改评价：rating / comment / mode 传哪个改哪个。"""
+        """修改评价：rating / comment / mode / price 传哪个改哪个。"""
         if not isinstance(payload, dict):
             raise StoreError(400, "请求体必须是 JSON 对象")
         rating = payload.get("rating")
         comment = payload.get("comment")
         mode = payload.get("mode")
-        if rating is None and comment is None and mode is None:
+        if "price" in payload:
+            price, _, _, _ = _price_fields({"price": payload.get("price")}, "评价")
+        else:
+            price = None
+        if rating is None and comment is None and mode is None and "price" not in payload:
             raise StoreError(400, "没有需要修改的字段")
         with self._lock, self._conn() as conn:
             if not conn.execute("SELECT 1 FROM reviews WHERE id = ?", (rid,)).fetchone():
@@ -554,6 +588,8 @@ class EatWhatStore:
                 if mode not in (0, 1):
                     raise StoreError(400, "mode 必须是 0（堂食）或 1（外卖）")
                 conn.execute("UPDATE reviews SET mode = ? WHERE id = ?", (mode, rid))
+            if "price" in payload:
+                conn.execute("UPDATE reviews SET price = ? WHERE id = ?", (price, rid))
         return {"ok": True, "review_id": rid}
 
     def delete_review(self, rid: int) -> dict:
@@ -634,6 +670,68 @@ class EatWhatStore:
                 dtags.update(_imgs(row["tags"]))
         return {"restaurant": sorted(rtags), "dish": sorted(dtags)}
 
+    def value_dishes(self, limit=20, mode=MODE_ALL, tag="") -> List[dict]:
+        """菜品性价比排行：性价比 = 平均评分 ÷ 最新实付价 × 10（每 10 元买到的分数）。"""
+        with self._lock, self._conn() as conn:
+            rows = conn.execute(
+                """SELECT * FROM (
+                     SELECT d.id, d.name AS dish_name, d.restaurant_id, r.name AS restaurant_name,
+                            ROUND(AVG(rv.rating), 2) AS avg_rating, COUNT(*) AS review_count,
+                            (SELECT rv2.price FROM reviews rv2 WHERE rv2.dish_id = d.id
+                             AND rv2.price IS NOT NULL ORDER BY rv2.id DESC LIMIT 1) AS price,
+                            (SELECT rv3.images FROM reviews rv3 WHERE rv3.dish_id = d.id
+                             AND rv3.images != '[]' ORDER BY rv3.id DESC LIMIT 1) AS images_sample
+                     FROM dishes d
+                     JOIN restaurants r ON r.id = d.restaurant_id
+                     JOIN reviews rv ON rv.dish_id = d.id
+                     WHERE (:m = -1 OR rv.mode = :m)
+                       AND (:tag = '' OR d.tags LIKE '%' || '"' || :tag || '"' || '%')
+                     GROUP BY d.id
+                   ) t
+                   WHERE t.price IS NOT NULL AND t.price > 0
+                   ORDER BY ROUND(t.avg_rating / t.price * 10, 1) DESC, t.avg_rating DESC
+                   LIMIT :lim""",
+                {"lim": max(1, min(limit, 200)), "m": clamp_mode(mode),
+                 "tag": str(tag or "")}).fetchall()
+        out = []
+        for x in rows:
+            item = self._norm_dish(x)
+            item["value"] = round(item["avg_rating"] / item["price"] * 10, 1)
+            out.append(item)
+        return out
+
+    def value_restaurants(self, limit=20, mode=MODE_ALL, tag="") -> List[dict]:
+        """商家性价比排行：性价比 = 平均评分 ÷ 均实付价 × 10（只统计填了价格的评价）。"""
+        with self._lock, self._conn() as conn:
+            rows = conn.execute(
+                """SELECT * FROM (
+                     SELECT r.id, r.name, r.area_id, r.tags,
+                            ROUND(AVG(rv.rating), 2) AS avg_rating,
+                            ROUND(AVG(rv.price), 2) AS avg_price,
+                            COUNT(*) AS review_count,
+                            (SELECT rv2.images FROM reviews rv2 WHERE rv2.restaurant_id = r.id
+                             AND rv2.images != '[]' ORDER BY rv2.id DESC LIMIT 1) AS images_sample
+                     FROM restaurants r
+                     JOIN reviews rv ON rv.restaurant_id = r.id
+                     WHERE rv.price IS NOT NULL AND rv.price > 0
+                       AND (:m = -1 OR rv.mode = :m)
+                       AND (:tag = '' OR r.tags LIKE '%' || '"' || :tag || '"' || '%')
+                     GROUP BY r.id
+                   ) t
+                   WHERE t.avg_price > 0
+                   ORDER BY ROUND(t.avg_rating / t.avg_price * 10, 1) DESC, t.avg_rating DESC
+                   LIMIT :lim""",
+                {"lim": max(1, min(limit, 200)), "m": clamp_mode(mode),
+                 "tag": str(tag or "")}).fetchall()
+        out = []
+        for x in rows:
+            item = dict(x)
+            item["images_sample"] = _imgs(item.pop("images_sample"))
+            item["tags"] = _imgs(item.get("tags"))
+            item["value"] = round(item["avg_rating"] / item["avg_price"] * 10, 1)
+            out.append(item)
+        return out
+
     def restaurant_detail(self, rid: int) -> dict:
         with self._lock, self._conn() as conn:
             r = conn.execute("SELECT * FROM restaurants WHERE id = ?", (rid,)).fetchone()
@@ -646,6 +744,8 @@ class EatWhatStore:
             dishes = [self._norm_dish(x) for x in conn.execute(
                 """SELECT d.id, d.name, d.tags, ROUND(AVG(rv.rating), 2) AS avg_rating,
                           COUNT(*) AS review_count, MAX(rv.created_at) AS last_time,
+                          (SELECT rv2.price FROM reviews rv2 WHERE rv2.dish_id = d.id
+                           AND rv2.price IS NOT NULL ORDER BY rv2.id DESC LIMIT 1) AS price,
                           (SELECT rv2.images FROM reviews rv2 WHERE rv2.dish_id = d.id
                            AND rv2.images != '[]' ORDER BY rv2.id DESC LIMIT 1) AS images_sample
                    FROM dishes d JOIN reviews rv ON rv.dish_id = d.id
@@ -654,9 +754,16 @@ class EatWhatStore:
             reviews = [dict(x) | {"images": _imgs(x["images"]),
                                   "dish_name": x["dish_name"] or ""} for x in conn.execute(
                 """SELECT rv.id, rv.dish_id, rv.mode, d.name AS dish_name, rv.rating, rv.comment,
-                          rv.images, rv.created_at
+                          rv.price, rv.orig_price, rv.discount, rv.cashback, rv.images, rv.created_at
                    FROM reviews rv LEFT JOIN dishes d ON d.id = rv.dish_id
                    WHERE rv.restaurant_id = ? ORDER BY rv.id DESC LIMIT 30""", (rid,)).fetchall()]
+
+            # 人均消费与性价比（只统计填了实付价的评价）
+            prow = conn.execute(
+                """SELECT ROUND(AVG(price), 2) AS avg_price, COUNT(*) AS cnt
+                   FROM reviews WHERE restaurant_id = :r AND price IS NOT NULL AND price > 0""",
+                {"r": rid}).fetchone()
+            avg_price = prow["avg_price"]
 
             # 堂食 / 外卖 分轨统计（该模式全部评价的平均分）
             splits = {}
@@ -677,6 +784,9 @@ class EatWhatStore:
                "lat": r["lat"], "lng": r["lng"], "created_at": r["created_at"],
                "tags": _imgs(r["tags"]),
                "area_id": r["area_id"], "area_name": area_name, "area_path": area_path,
+               "avg_price": avg_price,
+               "value": round(agg["avg_rating"] / avg_price * 10, 1)
+                        if (avg_price and agg.get("avg_rating")) else None,
                "dine_in": splits["dine_in"], "delivery": splits["delivery"]}
         out.update(agg)
         out["dishes"], out["reviews"] = dishes, reviews

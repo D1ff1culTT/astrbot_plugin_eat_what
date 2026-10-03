@@ -120,6 +120,17 @@ class EatWhatPlugin(Star):
         """
         return fmt.safe(fmt.render_area_query, self.store, area_name)
 
+    @filter.llm_tool(name="value_ranking")
+    async def value_ranking(self, event: AstrMessageEvent, scope: str = "菜品",
+                            mode: str = "全部", tag: str = ""):
+        """查询性价比排行（性价比 = 评分 ÷ 实付价格 × 10，数值越大越划算）。
+        Args:
+            scope(string): "菜品" 或 "商家"，默认菜品
+            mode(string): "全部"/"堂食"/"外卖"，默认全部
+            tag(string): 按标签筛选，可留空
+        """
+        return fmt.safe(fmt.render_value_ranking, self.store, scope, mode, tag)
+
     @filter.llm_tool(name="recommend_food")
     async def recommend_food(self, event: AstrMessageEvent, mode: str = "全部"):
         """随机推荐一家吃过的店（评分越高越容易被推荐）+ 招牌菜，用于「今天吃什么」。
@@ -158,6 +169,13 @@ class EatWhatPlugin(Star):
         yield event.plain_result(
             "🥘 " + fmt.safe(fmt.render_dish_ranking, self.store, "15", self._arg_label(event)))
 
+    @filter.command("性价比")
+    async def cmd_value(self, event: AstrMessageEvent):
+        """菜品性价比排行（可带参数：堂食/外卖）。"""
+        yield event.plain_result(
+            "💰 " + fmt.safe(fmt.render_value_ranking, self.store,
+                             "菜品", self._arg_label(event), ""))
+
     @filter.command("招牌菜")
     async def cmd_signature(self, event: AstrMessageEvent):
         """每家店的招牌菜排名（可带参数：堂食/外卖）。"""
@@ -181,7 +199,8 @@ class EatWhatPlugin(Star):
             "  /吃什么 [堂食|外卖]   随机推荐一家店\n"
             "  /餐厅排名 [堂食|外卖]  餐厅评分排名\n"
             "  /菜品排名 [堂食|外卖]  菜品评分排名\n"
-            "  /招牌菜 [堂食|外卖]   每家店的招牌菜\n\n"
+            "  /招牌菜 [堂食|外卖]   每家店的招牌菜\n"
+            "  /性价比 [堂食|外卖]   菜品性价比排行\n\n"
             "手机 app「吃了什么」录入：服务器填 http://<本机IP>:" + str(port) +
             "，Token 与插件配置 api_token 一致。\n"
             "数据存放在 AstrBot 数据目录 data/astrbot_plugin_eat_what/。"

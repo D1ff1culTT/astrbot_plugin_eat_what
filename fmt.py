@@ -32,6 +32,34 @@ def stars(avg) -> str:
     return "★" * r + "☆" * (5 - r) + f" {avg:g} 分"
 
 
+def num(v) -> str:
+    """12.0 -> 12，12.5 -> 12.5。"""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return f"{v:g}"
+
+
+def render_value_ranking(store, scope, mode, tag) -> str:
+    """性价比排行：性价比 = 评分 ÷ 实付价 × 10。scope=菜品/商家。"""
+    if str(scope or "").strip() in ("商家", "餐厅", "店"):
+        rows = store.value_restaurants(10, mode_value(mode), tag)
+        if not rows:
+            return "还没有带价格的商家记录（录入时填价格即可参与性价比排行）。"
+        lines = ["商家性价比排行（性价比 = 评分 ÷ 均价 × 10）："]
+        lines += [f"{i + 1}. {x['name']}  {stars(x['avg_rating'])} · 均价 ¥{num(x['avg_price'])}"
+                  f" · 性价比 {x['value']}" for i, x in enumerate(rows)]
+    else:
+        rows = store.value_dishes(10, mode_value(mode), tag)
+        if not rows:
+            return "还没有带价格的菜品记录（录入时填价格即可参与性价比排行）。"
+        lines = ["菜品性价比排行（性价比 = 评分 ÷ 价格 × 10）："]
+        lines += [f"{i + 1}. {x['dish_name']}（{x['restaurant_name']}）  {stars(x['avg_rating'])}"
+                  f" · ¥{num(x['price'])} · 性价比 {x['value']}" for i, x in enumerate(rows)]
+    return "\n".join(lines)
+
+
 def _fmt_restaurant(r: dict, idx=None) -> str:
     head = f"{idx}. " if idx else ""
     line = f"{head}{r['name']}  {stars(r.get('avg_rating'))}"

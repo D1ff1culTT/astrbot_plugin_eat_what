@@ -1,6 +1,6 @@
 name: astrbot_plugin_eat_what # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
 display_name: 吃了什么 · 美食记录 # 用于展示的名字
 desc: 手机 app 录入餐厅/菜品/评分/照片（堂食、外卖双轨，区块逐级分类聚合），AI 可随时查询排名、招牌菜与「今天吃什么」推荐。 # 插件简短描述
-version: v1.4.2 # 插件版本号
+version: v1.5.0 # 插件版本号
 author: lihaotian # 作者
 repo: https://github.com/D1ff1culTT/astrbot_plugin_eat_what # 插件的仓库地址

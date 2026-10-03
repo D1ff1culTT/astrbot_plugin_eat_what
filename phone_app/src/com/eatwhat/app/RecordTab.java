@@ -46,6 +46,9 @@ public class RecordTab implements Tab {
     private TextView btnLocate, tvCoords, btnSave;
     private EditText etAddress, etOverall, etRtags;
     private ScoreInput scoreOverall;
+    private EditText etOprice, etOorig, etOdiscount, etOcashback;
+    private TextView tvOpayfinal;
+    private LinearLayout llOdelivery;
     private LinearLayout llDishes;
     private final List<DishCard> cards = new ArrayList<>();
     private final SuggestAdapter suggest;
@@ -88,6 +91,9 @@ public class RecordTab implements Tab {
         ScoreInput score;
         EditText comment;
         EditText tags;
+        EditText price, orig, discount, cashback;
+        TextView payFinal;
+        LinearLayout delivery;
         LinearLayout photos;
         final List<File> files = new ArrayList<>();
     }
@@ -108,6 +114,13 @@ public class RecordTab implements Tab {
         etOverall = root.findViewById(R.id.et_overall);
         scoreOverall = root.findViewById(R.id.score_overall);
         etRtags = root.findViewById(R.id.et_rtags);
+        etOprice = root.findViewById(R.id.et_oprice);
+        llOdelivery = root.findViewById(R.id.ll_odelivery);
+        etOorig = root.findViewById(R.id.et_oorig);
+        etOdiscount = root.findViewById(R.id.et_odiscount);
+        etOcashback = root.findViewById(R.id.et_ocashback);
+        tvOpayfinal = root.findViewById(R.id.tv_opayfinal);
+        bindPayFinal(etOorig, etOdiscount, etOcashback, tvOpayfinal);
         llDishes = root.findViewById(R.id.ll_dishes);
         btnSave = root.findViewById(R.id.btn_save);
 
@@ -170,6 +183,54 @@ public class RecordTab implements Tab {
         chipModeIn.setTextColor(m == 0 ? 0xFFFFFFFF : 0xFF2B2320);
         chipModeOut.setBackgroundResource(m == 1 ? R.drawable.chip_on : R.drawable.chip_off);
         chipModeOut.setTextColor(m == 1 ? 0xFFFFFFFF : 0xFF2B2320);
+        // 外卖模式才显示 原价/券/返现 三件套
+        for (DishCard card : cards) {
+            card.delivery.setVisibility(m == 1 ? View.VISIBLE : View.GONE);
+        }
+        llOdelivery.setVisibility(m == 1 ? View.VISIBLE : View.GONE);
+    }
+
+    /** 原价/券/返现 变化时实时显示 "= 实付 ¥xx"。 */
+    private static void bindPayFinal(EditText orig, EditText discount, EditText cashback,
+                                     TextView tv) {
+        Runnable upd = () -> {
+            Double o = parseMoney(orig.getText().toString());
+            Double d = parseMoney(discount.getText().toString());
+            Double c = parseMoney(cashback.getText().toString());
+            if (o == null) {
+                tv.setText("");
+                return;
+            }
+            double pay = o - (d == null ? 0 : d) - (c == null ? 0 : c);
+            tv.setText("= 实付 ¥" + Ui.num(Math.max(0, pay)));
+        };
+        TextWatcher w = new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                upd.run();
+            }
+        };
+        orig.addTextChangedListener(w);
+        discount.addTextChangedListener(w);
+        cashback.addTextChangedListener(w);
+    }
+
+    private static Double parseMoney(String s) {
+        if (s == null || s.trim().isEmpty()) return null;
+        try {
+            double v = Double.parseDouble(s.trim());
+            return v < 0 ? null : v;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private void fetchSuggest(String kw) {
@@ -307,6 +368,14 @@ public class RecordTab implements Tab {
         card.score = card.view.findViewById(R.id.score_dish);
         card.comment = card.view.findViewById(R.id.et_dish_comment);
         card.tags = card.view.findViewById(R.id.et_dish_tags);
+        card.price = card.view.findViewById(R.id.et_price);
+        card.orig = card.view.findViewById(R.id.et_orig);
+        card.discount = card.view.findViewById(R.id.et_discount);
+        card.cashback = card.view.findViewById(R.id.et_cashback);
+        card.payFinal = card.view.findViewById(R.id.tv_payfinal);
+        card.delivery = card.view.findViewById(R.id.ll_delivery);
+        bindPayFinal(card.orig, card.discount, card.cashback, card.payFinal);
+        card.delivery.setVisibility(mode == 1 ? View.VISIBLE : View.GONE);
         card.photos = card.view.findViewById(R.id.ll_photos);
 
         card.view.findViewById(R.id.btn_del_dish).setOnClickListener(v -> {
@@ -497,6 +566,16 @@ public class RecordTab implements Tab {
                     d.put("rating", card.score.getScore());
                     d.put("comment", card.comment.getText().toString().trim());
                     d.put("tags", splitTags(card.tags.getText().toString()));
+                    Double price = parseMoney(card.price.getText().toString());
+                    if (price != null) d.put("price", price);
+                    if (mode == 1) {
+                        Double o = parseMoney(card.orig.getText().toString());
+                        Double dc = parseMoney(card.discount.getText().toString());
+                        Double cb = parseMoney(card.cashback.getText().toString());
+                        if (o != null) d.put("orig_price", o);
+                        if (dc != null) d.put("discount", dc);
+                        if (cb != null) d.put("cashback", cb);
+                    }
                     d.put("images", new JSONArray());
                     dishArr.put(d);
                 }
@@ -576,6 +655,16 @@ public class RecordTab implements Tab {
             o.put("rating", overall);
             o.put("comment", etOverall.getText().toString().trim());
             o.put("images", new JSONArray());
+            Double price = parseMoney(etOprice.getText().toString());
+            if (price != null) o.put("price", price);
+            if (mode == 1) {
+                Double og = parseMoney(etOorig.getText().toString());
+                Double dc = parseMoney(etOdiscount.getText().toString());
+                Double cb = parseMoney(etOcashback.getText().toString());
+                if (og != null) o.put("orig_price", og);
+                if (dc != null) o.put("discount", dc);
+                if (cb != null) o.put("cashback", cb);
+            }
             payload.put("overall", o);
         }
         return payload;
@@ -598,6 +687,16 @@ public class RecordTab implements Tab {
         etOverall.setText("");
         etRtags.setText("");
         scoreOverall.setScore(0);
+        etOprice.setText("");
+        etOorig.setText("");
+        etOdiscount.setText("");
+        etOcashback.setText("");
+        for (DishCard card : cards) {
+            card.price.setText("");
+            card.orig.setText("");
+            card.discount.setText("");
+            card.cashback.setText("");
+        }
         tvCoords.setText("");
         lat = lng = Double.NaN;
         areaId = 0;

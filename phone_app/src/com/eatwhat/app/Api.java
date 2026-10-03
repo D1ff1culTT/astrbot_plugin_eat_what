@@ -307,6 +307,20 @@ public final class Api {
         return getCached(c, "/api/tags", null);
     }
 
+    /** 菜品性价比排行（性价比 = 评分 ÷ 最新实付价 × 10）。 */
+    public static JSONArray valueDishes(Context c, int limit, int mode,
+                                        boolean[] fromCache, String tag) throws Exception {
+        return getArrCached(c, "/api/rank/value_dishes?limit=" + limit + "&mode=" + mode
+                + "&tag=" + URLEncoder.encode(tag == null ? "" : tag, "UTF-8"), fromCache);
+    }
+
+    /** 商家性价比排行（性价比 = 评分 ÷ 均实付价 × 10）。 */
+    public static JSONArray valueRestaurants(Context c, int limit, int mode,
+                                             boolean[] fromCache, String tag) throws Exception {
+        return getArrCached(c, "/api/rank/value_restaurants?limit=" + limit + "&mode=" + mode
+                + "&tag=" + URLEncoder.encode(tag == null ? "" : tag, "UTF-8"), fromCache);
+    }
+
     public static JSONObject randomPick(Context c, int mode) throws Exception {
         return get(c, "/api/random?mode=" + mode);
     }
@@ -337,13 +351,19 @@ public final class Api {
         return post(c, "/api/visits", payload);
     }
 
-    /** 修改评价：评分 / 文字 / 堂食外卖。 */
+    /** 修改评价：评分 / 文字 / 堂食外卖；price 非 null 时同时更新价格。 */
     public static JSONObject updateReview(Context c, long id, int rating,
                                           String comment, int mode) throws Exception {
+        return updateReview(c, id, rating, comment, mode, null);
+    }
+
+    public static JSONObject updateReview(Context c, long id, int rating,
+                                          String comment, int mode, Double price) throws Exception {
         JSONObject p = new JSONObject();
         p.put("rating", rating);
         p.put("comment", comment == null ? "" : comment);
         p.put("mode", mode);
+        if (price != null) p.put("price", price);
         return put(c, "/api/reviews/" + id, p);
     }
 
