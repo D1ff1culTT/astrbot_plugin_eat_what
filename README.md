@@ -34,7 +34,7 @@ astrbot_plugin_eat_what/
 
 ## 一、安装插件（服务器上的 AstrBot）
 
-1. AstrBot WebUI → 插件管理 → 从路径/仓库安装本目录（含 `metadata.yaml`）。
+1. AstrBot WebUI → 插件管理 → 从仓库地址安装：`https://github.com/D1ff1culTT/astrbot_plugin_eat_what`（或下载本仓库后从路径安装，含 `metadata.yaml`）。
 2. 插件配置：
    - `http_port`：手机上传端口，默认 **8765**；
    - `api_token`：上传鉴权 Token（手机 app 的 ⚙ 里填同一个值；留空不鉴权，仅建议内网）；
